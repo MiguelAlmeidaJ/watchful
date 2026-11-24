@@ -1,4 +1,4 @@
-import {Body,Controller,Get,Post,Query,Req,UseGuards,Inject,BadRequestException,NotFoundException,Param} from '@nestjs/common';
+import {Body,Controller,Get,Post,Query,Req,UseGuards,Inject,BadRequestException,NotFoundException,Param,ConflictException} from '@nestjs/common';
 import {z} from 'zod';
 import {Database} from '../../common/database';
 import {audit} from '../../common/audit';
@@ -13,11 +13,21 @@ export class EnvironmentController{
  constructor(@Inject(Database) private readonly db:Database,@Inject(GeoService) private readonly geo:GeoService){}
  @Post('ana/targets') async registerAna(@Req() req:AuthRequest,@Body() body:unknown){
   requirePlatform(req.actor);const v=parse(z.object({municipalityId:uuid,stationCode:z.string().regex(/^\d{8}$/),stationName:z.string().trim().min(1).max(150)}).strict(),body);await this.geo.scope(req.actor,v.municipalityId);
-  return this.db.transaction(async c=>{const row=(await c.query('INSERT INTO ana_targets(municipality_id,station_code,station_name) VALUES($1,$2,$3) ON CONFLICT(municipality_id,station_code) DO UPDATE SET station_name=excluded.station_name RETURNING id',[v.municipalityId,v.stationCode,v.stationName])).rows[0]!;await audit(c,req.actor.id,'ana.target.register',row.id);return row;});
+  return this.db.transaction(async c=>{await c.query('SELECT id FROM municipalities WHERE id=$1 FOR UPDATE',[v.municipalityId]);const row=(await c.query('INSERT INTO ana_targets(municipality_id,station_code,station_name) VALUES($1,$2,$3) ON CONFLICT(municipality_id,station_code) DO UPDATE SET station_name=excluded.station_name,enabled=CASE WHEN ana_targets.archived_at IS NOT NULL THEN true ELSE ana_targets.enabled END,next_due=CASE WHEN ana_targets.archived_at IS NOT NULL THEN now() ELSE ana_targets.next_due END,archived_at=NULL RETURNING id',[v.municipalityId,v.stationCode,v.stationName])).rows[0]!;await audit(c,req.actor.id,'ana.target.register',row.id);return row;});
  }
  @Get('ana/targets') async anaTargets(@Req() req:AuthRequest,@Query('municipalityId') raw:string){
   const id=parse(uuid,raw);await this.geo.scope(req.actor,id);
-  return (await this.db.query(`SELECT t.*,v.observed_at,v.discharge_m3_s,v.discharge_quality FROM ana_targets t LEFT JOIN LATERAL(SELECT observed_at,discharge_m3_s,discharge_quality FROM ana_telemetry WHERE target_id=t.id ORDER BY observed_at DESC LIMIT 1)v ON true WHERE t.municipality_id=$1 ORDER BY t.station_name`,[id])).rows;
+  return (await this.db.query(`SELECT t.*,v.observed_at,v.discharge_m3_s,v.discharge_quality FROM ana_targets t LEFT JOIN LATERAL(SELECT observed_at,discharge_m3_s,discharge_quality FROM ana_telemetry WHERE target_id=t.id ORDER BY observed_at DESC LIMIT 1)v ON true WHERE t.municipality_id=$1 AND t.archived_at IS NULL ORDER BY t.station_name`,[id])).rows;
+ }
+ @Post('ana/targets/:id/archive') async archiveAna(@Req() req:AuthRequest,@Param('id') raw:string,@Body() body:unknown){
+  requirePlatform(req.actor);const id=parse(uuid,raw),v=parse(z.object({municipalityId:uuid}).strict(),body);await this.geo.scope(req.actor,v.municipalityId);
+  return this.db.transaction(async c=>{
+   await c.query('SELECT id FROM municipalities WHERE id=$1 FOR UPDATE',[v.municipalityId]);
+   const t=(await c.query('SELECT station_code FROM ana_targets WHERE id=$1 AND municipality_id=$2 AND archived_at IS NULL FOR UPDATE',[id,v.municipalityId])).rows[0];if(!t)throw new NotFoundException('Estação não encontrada');
+   const used=(await c.query('SELECT name FROM hydro_compositions WHERE municipality_id=$1 AND archived_at IS NULL AND $2=ANY(station_codes)',[v.municipalityId,t.station_code])).rows;
+   if(used.length)throw new ConflictException('Retire a estação das composições antes de removê-la: '+used.map(x=>x.name).join(', '));
+   await c.query('UPDATE ana_targets SET enabled=false,archived_at=now() WHERE id=$1',[id]);await audit(c,req.actor.id,'ana.target.archive',id,null,{municipalityId:v.municipalityId,stationCode:t.station_code});return {success:true};
+  });
  }
  @Get('ana/targets/:id/history') async anaHistory(@Req() req:AuthRequest,@Param('id') raw:string){
   const id=parse(uuid,raw);const t=(await this.db.query('SELECT municipality_id FROM ana_targets WHERE id=$1',[id])).rows[0];if(!t)throw new NotFoundException();await this.geo.scope(req.actor,t.municipality_id);

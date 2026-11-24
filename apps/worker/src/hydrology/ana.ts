@@ -33,13 +33,14 @@ export async function pollAna(pool:Pool){
  const c=await pool.connect();let locked=false;
  try{
   locked=Boolean((await c.query('SELECT pg_try_advisory_lock(827351) AS locked')).rows[0]?.locked);if(!locked)return;
-  const target=(await c.query('SELECT id,station_code FROM ana_targets WHERE enabled AND next_due<=now() ORDER BY next_due LIMIT 1')).rows[0];if(!target)return;
+  const target=(await c.query('SELECT id,station_code FROM ana_targets WHERE enabled AND archived_at IS NULL AND next_due<=now() ORDER BY next_due LIMIT 1')).rows[0];if(!target)return;
   await c.query("UPDATE ana_targets SET last_attempt_at=now(),next_due=now()+interval '15 minutes' WHERE id=$1",[target.id]);
   let stage='FETCH';
   try{
    const rows=await collect(target.station_code);
    stage='DATABASE';
    await c.query('BEGIN');
+   const active=(await c.query('SELECT id FROM ana_targets WHERE id=$1 AND enabled AND archived_at IS NULL FOR UPDATE',[target.id])).rowCount;if(!active){await c.query('ROLLBACK');return;}
    for(const row of rows)await c.query(`INSERT INTO ana_telemetry(target_id,observed_at,discharge_m3_s,discharge_quality,level_raw,level_quality) VALUES($1,$2,$3,$4,$5,$6)
    ON CONFLICT(target_id,observed_at) DO UPDATE SET discharge_m3_s=excluded.discharge_m3_s,discharge_quality=excluded.discharge_quality,level_raw=excluded.level_raw,level_quality=excluded.level_quality,fetched_at=now()`,[target.id,row.observedAt,row.discharge,row.dischargeQuality,row.level,row.levelQuality]);
    await c.query('UPDATE ana_targets SET last_success_at=now(),last_error=NULL,records_count=$2 WHERE id=$1',[target.id,rows.length]);await c.query('COMMIT');

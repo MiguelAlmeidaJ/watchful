@@ -18,15 +18,16 @@ export class HydrologyController{
   const id=parse(uuid,raw);await this.geo.scope(req.actor,id);
   const municipality=(await this.db.query('SELECT main_river,main_river_source FROM municipalities WHERE id=$1',[id])).rows[0];
   const rivers=(await this.db.query('SELECT count(*)::int AS count,count(DISTINCT name)::int AS named_groups FROM hydro_features WHERE municipality_id=$1',[id])).rows[0];
-  const compositions=(await this.db.query('SELECT id,name,source,station_codes FROM hydro_compositions WHERE municipality_id=$1 ORDER BY name',[id])).rows;
+  const compositions=(await this.db.query('SELECT id,name,source,station_codes,margin_m3_s,updated_at FROM hydro_compositions WHERE municipality_id=$1 AND archived_at IS NULL ORDER BY name',[id])).rows;
   const data=[];
   for(const c of compositions){
-   const members=(await this.db.query(`SELECT code AS station_code,t.station_name,t.enabled,t.last_error,t.last_success_at,v.observed_at,v.discharge_m3_s FROM unnest($2::text[]) code LEFT JOIN ana_targets t ON t.municipality_id=$1 AND t.station_code=code LEFT JOIN LATERAL(SELECT observed_at,discharge_m3_s FROM ana_telemetry WHERE target_id=t.id ORDER BY observed_at DESC LIMIT 1)v ON true`,[id,c.station_codes])).rows;
-   const history=(await this.db.query(`SELECT a.observed_at,sum(a.discharge_m3_s)::float8 AS discharge_m3_s FROM ana_telemetry a JOIN ana_targets t ON t.id=a.target_id WHERE t.municipality_id=$1 AND t.station_code=ANY($2::text[]) AND t.enabled AND a.discharge_quality='Dado aprovado' AND a.discharge_m3_s IS NOT NULL AND a.observed_at BETWEEN now()-interval '7 days' AND now() GROUP BY a.observed_at HAVING count(DISTINCT t.station_code)=cardinality($2::text[]) ORDER BY a.observed_at DESC LIMIT 1000`,[id,c.station_codes])).rows;
+   const members=(await this.db.query(`SELECT code AS station_code,t.station_name,t.enabled,t.last_error,t.last_success_at,v.observed_at,v.discharge_m3_s,v.discharge_quality FROM unnest($2::text[]) code LEFT JOIN ana_targets t ON t.municipality_id=$1 AND t.station_code=code AND t.archived_at IS NULL LEFT JOIN LATERAL(SELECT observed_at,discharge_m3_s,discharge_quality FROM ana_telemetry WHERE target_id=t.id ORDER BY observed_at DESC LIMIT 1)v ON true`,[id,c.station_codes])).rows;
+   const history=(await this.db.query(`SELECT a.observed_at,sum(a.discharge_m3_s)::float8 AS measured_sum_m3_s,(sum(a.discharge_m3_s)+$3::float8)::float8 AS discharge_m3_s FROM ana_telemetry a JOIN ana_targets t ON t.id=a.target_id WHERE t.municipality_id=$1 AND t.station_code=ANY($2::text[]) AND t.archived_at IS NULL AND a.discharge_quality='Dado aprovado' AND a.discharge_m3_s IS NOT NULL AND a.observed_at BETWEEN now()-interval '7 days' AND now() GROUP BY a.observed_at HAVING count(DISTINCT t.station_code)=cardinality($2::text[]) ORDER BY a.observed_at DESC LIMIT 1000`,[id,c.station_codes,c.margin_m3_s])).rows;
    const latest=history[0]??null;
    const fresh=latest&&Date.now()-Date.parse(String(latest.observed_at))<=7200000;
-   const complete=Boolean(fresh&&members.every(m=>m.enabled&&!m.last_error&&m.observed_at&&Date.parse(String(m.observed_at))===Date.parse(String(latest.observed_at))&&m.discharge_m3_s!==null));
-   data.push({...c,members,latest:complete?latest:null,lastComplete:latest,history,status:complete?'available':'unavailable'});
+   const complete=Boolean(fresh&&members.every(m=>m.enabled&&!m.last_error&&m.observed_at&&Date.parse(String(m.observed_at))===Date.parse(String(latest.observed_at))&&m.discharge_m3_s!==null&&m.discharge_quality==='Dado aprovado'));
+   const issues=members.flatMap(m=>{const reason=!m.station_name?'Estação ausente':!m.enabled?'Coleta desativada':m.last_error?'Falha na coleta':!m.observed_at?'Sem leitura':m.discharge_m3_s==null||m.discharge_quality!=='Dado aprovado'?'Sem vazão aprovada':Date.now()-Date.parse(String(m.observed_at))>7200000?'Leitura desatualizada':!latest||Date.parse(String(m.observed_at))!==Date.parse(String(latest.observed_at))?'Horários diferentes':null;return reason?[{stationCode:m.station_code,reason}]:[];});
+   data.push({...c,members,latest:complete?latest:null,lastComplete:latest,history,issues,status:complete?'available':'unavailable'});
   }
   const imported=(await this.db.query('SELECT * FROM hydro_import_runs WHERE municipality_id=$1',[id])).rows[0]??null;
   const named=(await this.db.query("SELECT name,count(*)::int AS reaches FROM hydro_features WHERE municipality_id=$1 AND name<>'Trecho sem nome' GROUP BY name ORDER BY count(*) DESC,name LIMIT 200",[id])).rows;
@@ -75,13 +76,23 @@ export class HydrologyController{
   });
  }
  @Post('compositions') async composition(@Req() req:AuthRequest,@Body() body:unknown){
-  requirePlatform(req.actor);const v=parse(z.object({municipalityId:uuid,name,source:name,stationCodes:z.array(station).min(2).max(20)}).strict(),body);await this.geo.scope(req.actor,v.municipalityId);
+  requirePlatform(req.actor);const v=parse(z.object({id:uuid.optional(),municipalityId:uuid,name,source:name,stationCodes:z.array(station).min(2).max(20),marginM3s:z.number().finite().min(0).max(1000000).default(0)}).strict(),body);await this.geo.scope(req.actor,v.municipalityId);
   if(new Set(v.stationCodes).size!==v.stationCodes.length)throw new BadRequestException('Estações duplicadas');
-  return this.db.transaction(async c=>{const n=(await c.query('SELECT count(*)::int AS n FROM ana_targets WHERE municipality_id=$1 AND station_code=ANY($2::text[])',[v.municipalityId,v.stationCodes])).rows[0]?.n;if(n!==v.stationCodes.length)throw new BadRequestException('Cadastre todas as estações no município');
-   const row=(await c.query('INSERT INTO hydro_compositions(municipality_id,name,source,station_codes) VALUES($1,$2,$3,$4) ON CONFLICT(municipality_id,name) DO UPDATE SET source=excluded.source,station_codes=excluded.station_codes RETURNING id',[v.municipalityId,v.name,v.source,v.stationCodes])).rows[0]!;await audit(c,req.actor.id,'hydrology.composition',row.id,null,{stationCodes:v.stationCodes});return row;});
+  return this.db.transaction(async c=>{
+   await c.query('SELECT id FROM municipalities WHERE id=$1 FOR UPDATE',[v.municipalityId]);
+   const n=(await c.query('SELECT count(*)::int AS n FROM ana_targets WHERE municipality_id=$1 AND archived_at IS NULL AND station_code=ANY($2::text[])',[v.municipalityId,v.stationCodes])).rows[0]?.n;if(n!==v.stationCodes.length)throw new BadRequestException('Selecione estações cadastradas e não removidas deste município');
+   if((await c.query('SELECT 1 FROM hydro_compositions WHERE municipality_id=$1 AND name=$2 AND ($3::uuid IS NULL OR id<>$3)',[v.municipalityId,v.name,v.id??null])).rowCount)throw new ConflictException('Nome de composição já cadastrado, inclusive arquivadas');
+   const row=v.id?(await c.query('UPDATE hydro_compositions SET name=$3,source=$4,station_codes=$5,margin_m3_s=$6,updated_at=now() WHERE id=$1 AND municipality_id=$2 AND archived_at IS NULL RETURNING id',[v.id,v.municipalityId,v.name,v.source,v.stationCodes,v.marginM3s])).rows[0]:(await c.query('INSERT INTO hydro_compositions(municipality_id,name,source,station_codes,margin_m3_s) VALUES($1,$2,$3,$4,$5) RETURNING id',[v.municipalityId,v.name,v.source,v.stationCodes,v.marginM3s])).rows[0];
+   if(!row)throw new BadRequestException('Composição não encontrada neste município');
+   await audit(c,req.actor.id,'hydrology.composition',row.id,null,{municipalityId:v.municipalityId,name:v.name,stationCodes:v.stationCodes,marginM3s:v.marginM3s,source:v.source});return row;
+  });
+ }
+ @Post('compositions/archive') async archiveComposition(@Req() req:AuthRequest,@Body() body:unknown){
+  requirePlatform(req.actor);const v=parse(z.object({municipalityId:uuid,id:uuid}).strict(),body);await this.geo.scope(req.actor,v.municipalityId);
+  return this.db.transaction(async c=>{await c.query('SELECT id FROM municipalities WHERE id=$1 FOR UPDATE',[v.municipalityId]);const row=(await c.query('UPDATE hydro_compositions SET archived_at=now(),updated_at=now() WHERE id=$1 AND municipality_id=$2 AND archived_at IS NULL RETURNING id',[v.id,v.municipalityId])).rows[0];if(!row)throw new BadRequestException('Composição não encontrada');await audit(c,req.actor.id,'hydrology.composition.archive',row.id,null,{municipalityId:v.municipalityId});return row;});
  }
  @Post('station-enabled') async enable(@Req() req:AuthRequest,@Body() body:unknown){
   requirePlatform(req.actor);const v=parse(z.object({municipalityId:uuid,stationCode:station,enabled:z.boolean()}).strict(),body);await this.geo.scope(req.actor,v.municipalityId);
-  return this.db.transaction(async c=>{const row=(await c.query('UPDATE ana_targets SET enabled=$3,next_due=CASE WHEN $3 THEN now() ELSE next_due END WHERE municipality_id=$1 AND station_code=$2 RETURNING id',[v.municipalityId,v.stationCode,v.enabled])).rows[0];if(!row)throw new BadRequestException('Estação não cadastrada');await audit(c,req.actor.id,'hydrology.station.enabled',row.id,null,{enabled:v.enabled});return row;});
+  return this.db.transaction(async c=>{const row=(await c.query('UPDATE ana_targets SET enabled=$3,next_due=CASE WHEN $3 THEN now() ELSE next_due END WHERE municipality_id=$1 AND station_code=$2 AND archived_at IS NULL RETURNING id',[v.municipalityId,v.stationCode,v.enabled])).rows[0];if(!row)throw new BadRequestException('Estação não cadastrada');await audit(c,req.actor.id,'hydrology.station.enabled',row.id,null,{enabled:v.enabled});return row;});
  }
 }
