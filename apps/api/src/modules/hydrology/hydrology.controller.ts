@@ -1,4 +1,4 @@
-import {Body,Controller,Get,Post,Query,Req,UseGuards,Inject,ConflictException,BadRequestException} from '@nestjs/common';
+import {Body,Controller,Get,Post,Query,Req,UseGuards,Inject,ConflictException,BadRequestException,BadGatewayException} from '@nestjs/common';
 import {z} from 'zod';
 import {Database} from '../../common/database';
 import {audit} from '../../common/audit';
@@ -6,6 +6,7 @@ import {parse,uuid} from '../../common/validation';
 import {AuthGuard,requirePlatform,type AuthRequest} from '../auth/auth.guard';
 import {GeoService} from '../geo/geo.service';
 import {hydroGeometry} from '../geo/geo.schemas';
+import {fetchBho6,BHO6_SOURCE,BHO6_URL} from './bho6';
 const name=z.string().trim().min(1).max(150);
 const station=z.string().regex(/^\d{8}$/);
 const river=z.object({externalId:name,name:name.nullable(),downstreamExternalId:name.nullable().optional(),watercourseType:name.optional(),geometry:hydroGeometry}).strict();
@@ -27,7 +28,34 @@ export class HydrologyController{
    const complete=Boolean(fresh&&members.every(m=>m.enabled&&!m.last_error&&m.observed_at&&Date.parse(String(m.observed_at))===Date.parse(String(latest.observed_at))&&m.discharge_m3_s!==null));
    data.push({...c,members,latest:complete?latest:null,lastComplete:latest,history,status:complete?'available':'unavailable'});
   }
-  return {municipality,rivers,compositions:data};
+  const imported=(await this.db.query('SELECT * FROM hydro_import_runs WHERE municipality_id=$1',[id])).rows[0]??null;
+  const named=(await this.db.query("SELECT name,count(*)::int AS reaches FROM hydro_features WHERE municipality_id=$1 AND name<>'Trecho sem nome' GROUP BY name ORDER BY count(*) DESC,name LIMIT 200",[id])).rows;
+  return {municipality,rivers:{...rivers,named,imported},compositions:data};
+ }
+ @Post('rivers/bho6') async syncBho6(@Req() req:AuthRequest,@Body() body:unknown){
+  requirePlatform(req.actor);const {municipalityId}=parse(z.object({municipalityId:uuid}).strict(),body);await this.geo.scope(req.actor,municipalityId);
+  const extent=(await this.db.query("SELECT boundary_version,md5(ST_AsEWKB(boundary)::text) AS digest,ARRAY[ST_XMin(boundary),ST_YMin(boundary),ST_XMax(boundary),ST_YMax(boundary)] AS bbox FROM municipalities WHERE id=$1 AND boundary IS NOT NULL",[municipalityId])).rows[0];
+  if(!extent)throw new ConflictException('Importe a malha municipal primeiro');
+  let rows:Awaited<ReturnType<typeof fetchBho6>>;
+  try{rows=await fetchBho6(extent.bbox.map(Number));}catch(e){const code=e instanceof Error&&/^BHO6_[A-Z0-9_]+$/.test(e.message)?e.message:'BHO6_NETWORK_OR_INVALID_RESPONSE';throw new BadGatewayException('ANA BHO6: '+code);}
+  return this.db.transaction(async c=>{
+   const current=(await c.query("SELECT md5(ST_AsEWKB(boundary)::text) AS digest FROM municipalities WHERE id=$1 FOR UPDATE",[municipalityId])).rows[0];
+   if(current?.digest!==extent.digest)throw new ConflictException('Malha alterada durante a consulta; repita a importação');
+   await c.query('CREATE TEMP TABLE bho6_stage (external_id text PRIMARY KEY,name text,source_version text,downstream_external_id text,watercourse_type text,geometry geometry(MultiLineString,4326),attributes jsonb) ON COMMIT DROP');
+   for(let i=0;i<rows.length;i+=100){
+    await c.query(`INSERT INTO bho6_stage SELECT x.external_id,x.name,x.source_version,x.downstream_external_id,x.watercourse_type,ST_Multi(ST_CollectionExtract(ST_Intersection(m.boundary,ST_SetSRID(ST_GeomFromGeoJSON(x.geometry),4326)),2)),x.attributes FROM jsonb_to_recordset($2::jsonb) AS x(external_id text,name text,source_version text,downstream_external_id text,watercourse_type text,geometry jsonb,attributes jsonb) CROSS JOIN municipalities m WHERE m.id=$1`,[municipalityId,JSON.stringify(rows.slice(i,i+100))]);
+   }
+   if((await c.query('SELECT 1 FROM bho6_stage WHERE geometry IS NULL OR NOT ST_IsValid(geometry) LIMIT 1')).rowCount)throw new BadGatewayException('ANA BHO6: geometria inválida');
+   await c.query('DELETE FROM bho6_stage WHERE ST_IsEmpty(geometry)');
+   const imported=(await c.query('SELECT count(*)::int AS n FROM bho6_stage')).rows[0].n;
+   if(!imported)throw new BadGatewayException('ANA BHO6: nenhum trecho intersecta a malha');
+   await c.query(`INSERT INTO hydro_features(municipality_id,source,external_id,name,source_version,downstream_external_id,watercourse_type,geometry,source_attributes)
+    SELECT $1,$2,external_id,name,source_version,downstream_external_id,watercourse_type,geometry,attributes FROM bho6_stage
+    ON CONFLICT(municipality_id,source,external_id) DO UPDATE SET name=excluded.name,source_version=excluded.source_version,downstream_external_id=excluded.downstream_external_id,watercourse_type=excluded.watercourse_type,geometry=excluded.geometry,source_attributes=excluded.source_attributes,updated_at=now()`,[municipalityId,BHO6_SOURCE]);
+   await c.query('DELETE FROM hydro_features h WHERE municipality_id=$1 AND source=$2 AND NOT EXISTS(SELECT 1 FROM bho6_stage s WHERE s.external_id=h.external_id)',[municipalityId,BHO6_SOURCE]);
+   await c.query('INSERT INTO hydro_import_runs(municipality_id,source_url,boundary_version,received,imported) VALUES($1,$2,$3,$4,$5) ON CONFLICT(municipality_id) DO UPDATE SET source_url=excluded.source_url,boundary_version=excluded.boundary_version,received=excluded.received,imported=excluded.imported,imported_at=now()',[municipalityId,BHO6_URL,extent.boundary_version,rows.length,imported]);
+   await audit(c,req.actor.id,'hydrology.bho6.sync',municipalityId,null,{received:rows.length,imported});return {received:rows.length,imported};
+  });
  }
  @Post('main-river') async main(@Req() req:AuthRequest,@Body() body:unknown){
   requirePlatform(req.actor);const v=parse(z.object({municipalityId:uuid,name,source:name}).strict(),body);await this.geo.scope(req.actor,v.municipalityId);

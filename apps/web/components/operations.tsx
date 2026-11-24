@@ -123,7 +123,7 @@ function GeoPage({api,page,org,city,revision,refresh,operator,platform,onConfigu
  const [viewport,setViewport]=useState<number[]|null>(null);
  const box=viewport??bounds.data?.bbox??null;
  const wanted:Layer[]=page==='map'?enabled:page==='risk'?['risk-areas','historical-risk-sectors']:page==='shelters'?['shelters']:['incidents'];
- const loaded=useLoad(async()=>{const entries=await Promise.all(wanted.map(async l=>[l,await api.request<FeatureCollection&{truncated:boolean}>('/geo/layers/'+l+query({municipalityId:city,bbox:box!.join(','),limit:200}))] as const));return Object.fromEntries(entries) as TerritoryLayers;},[city,revision,box?.join(','),wanted.join(',')],!!box&&box[2]!-box[0]!<=10&&box[3]!-box[1]!<=10);
+ const loaded=useLoad(async()=>{const entries=await Promise.all(wanted.map(async l=>[l,await api.request<FeatureCollection&{truncated:boolean}>('/geo/layers/'+l+query({municipalityId:city,bbox:box!.join(','),limit:l==='rivers'?2000:200}))] as const));return Object.fromEntries(entries) as TerritoryLayers;},[city,revision,box?.join(','),wanted.join(',')],!!box&&box[2]!-box[0]!<=10&&box[3]!-box[1]!<=10);
  const features = page === 'risk' ? loaded.data?.['risk-areas']?.features ?? [] : Object.values(loaded.data??{}).flatMap(x=>x?.features??[]);
  const historicalRows = (loaded.data?.['historical-risk-sectors']?.features ?? []).map(feature => ({ id: feature.id, ...feature.properties }));
  const rows=features.map(x=>({id:x.id,...x.properties}));

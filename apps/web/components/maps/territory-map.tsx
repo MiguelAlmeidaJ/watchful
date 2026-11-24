@@ -29,6 +29,12 @@ export function TerritoryMap({layers,center,styleUrl,onBounds,initialBounds}:{la
    m.addLayer({id:'river-lines',type:'line',source:'rivers',paint:{'line-color':'#0284c7','line-width':2}});
    for(const [k,color] of [['stations','#0369a1'],['forecast-locations','#7c3aed'],['shelters','#0f766e'],['incidents','#b91c1c']] as const)m.addLayer({id:k+'-points',type:'circle',source:k,paint:{'circle-color':color,'circle-radius':6,'circle-stroke-color':'#fff','circle-stroke-width':2}});
    const details = new maplibregl.Popup({ focusAfterOpen: false });
+   m.on('click','river-lines',event=>{
+    const data=event.features?.[0]?.properties;if(!data)return;
+    const node=document.createElement('div');const title=document.createElement('strong');title.textContent=String(data.name??'Trecho sem nome');node.append(title);
+    for(const v of [data.source,data.sourceVersion,data.externalId?'Trecho: '+data.externalId:null,data.downstreamExternalId?'Jusante: '+data.downstreamExternalId:null]){if(!v)continue;const line=document.createElement('p');line.textContent=String(v);node.append(line);}
+    details.setLngLat(event.lngLat).setDOMContent(node).addTo(m);
+   });
    m.on('click','historical-risk-fill', event => {
     const data = event.features?.[0]?.properties;
     if (!data) return;

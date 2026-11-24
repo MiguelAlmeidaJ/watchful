@@ -47,7 +47,7 @@ export class GeoController{
   return (await this.geo.db.query('SELECT version,snapshot,created_at FROM risk_area_versions WHERE area_id=$1 ORDER BY version DESC LIMIT 50',[id])).rows;
  }
  @Get('layers/:layer') async layers(@Req() req:AuthRequest,@Param('layer') raw:string,@Query() query:unknown){
-  const l=parse(layer,raw),q=parse(z.object({municipalityId:uuid,bbox,limit:z.coerce.number().int().min(1).max(200).default(100)}),query);
+  const l=parse(layer,raw),q=parse(z.object({municipalityId:uuid,bbox,limit:z.coerce.number().int().min(1).max(2000).default(100)}),query);
   const municipality=await this.geo.scope(req.actor,q.municipalityId);
   const specs={
    municipalities:{table:'municipalities',geom:'boundary',where:'t.id=$1',props:"jsonb_build_object('name',t.name,'ibgeCode',t.ibge_code,'source',t.boundary_source)"},
@@ -60,9 +60,10 @@ export class GeoController{
    'forecast-locations':{table:'forecast_locations',geom:'location',where:'t.municipality_id=$1',props:"jsonb_build_object('name',t.name,'enabled',t.enabled)"},
    shelters:{table:'shelters',geom:'location',where:'t.municipality_id=$1',props:"jsonb_build_object('name',t.name,'status',t.status,'verifiedAt',t.verified_at,'source',t.source)"},
    incidents:{table:'incidents',geom:'location',where:'t.municipality_id=$1 AND ($7::boolean OR EXISTS(SELECT 1 FROM memberships ms WHERE ms.organization_id=t.organization_id AND ms.user_id=$8))',props:"jsonb_build_object('hazard',t.hazard,'status',t.status,'occurredAt',t.occurred_at)"},
-   rivers:{table:'hydro_features',geom:'geometry',where:'t.municipality_id=$1',props:"jsonb_build_object('name',t.name,'source',t.source)"}
+   rivers:{table:'hydro_features',geom:'geometry',where:'t.municipality_id=$1',props:"jsonb_build_object('name',t.name,'source',t.source,'externalId',t.external_id,'downstreamExternalId',t.downstream_external_id,'sourceVersion',t.source_version)"}
   } as const;
   const s=specs[l];
+  if(l!=='rivers'&&q.limit>200)throw new BadRequestException('Limite máximo de 200 para esta camada');
   const params:unknown[]=[q.municipalityId,...q.bbox,q.limit+1];if(l==='incidents')params.push(req.actor.platformAdmin,req.actor.id);
   const rows=(await this.geo.db.query(`SELECT t.id,ST_AsGeoJSON(t.${s.geom})::jsonb AS geometry,${s.props} AS properties FROM ${s.table} t WHERE ${s.where} AND ST_Intersects(t.${s.geom},ST_MakeEnvelope($2,$3,$4,$5,4326)) ORDER BY t.id LIMIT $6`,params)).rows;
   return {type:'FeatureCollection',features:rows.slice(0,q.limit).map(r=>({type:'Feature',id:r.id,geometry:r.geometry,properties:r.properties})),truncated:rows.length>q.limit,municipalityBoundaryKnown:municipality.has_boundary};
