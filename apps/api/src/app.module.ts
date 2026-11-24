@@ -7,5 +7,6 @@ import { HealthController } from './modules/health/health.controller';
 import { WeatherModule } from './modules/weather/weather.module';
 import { GeoModule } from './modules/geo/geo.module';
 import { AlertsModule } from './modules/alerts/alerts.module';
-@Module({imports:[DatabaseModule,AuthModule,WeatherModule,GeoModule,AlertsModule],controllers:[HealthController,OrganizationsController,TerritoryController]})
+import { EnvironmentModule } from './modules/environment/environment.module';
+@Module({imports:[DatabaseModule,AuthModule,WeatherModule,GeoModule,AlertsModule,EnvironmentModule],controllers:[HealthController,OrganizationsController,TerritoryController]})
 export class AppModule {}
