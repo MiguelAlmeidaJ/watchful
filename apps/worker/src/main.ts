@@ -2,6 +2,7 @@ import { config } from 'dotenv';
 import { resolve } from 'node:path';
 import { Queue,Worker } from 'bullmq';
 import { Pool } from 'pg';
+import { pollAna } from './hydrology/ana';
 import { AlertProcessor } from './alerts/processor';
 import { Ingestion, type TargetKind } from './weather/ingestion';
 config({path:resolve(__dirname,'../../../.env')});
@@ -45,6 +46,7 @@ async function bootstrap(){
  const alertQueue=new Queue('alerts.processing',{connection});
  const processor=new AlertProcessor(pool);
  const alertWorker=new Worker('alerts.processing',async job=>{
+  if(job.name==='ana-poll'){if(process.env.ANA_INGESTION_ENABLED==='true')await pollAna(pool);return;}
   if(job.name==='maintenance'){await processor.expire();await processor.deliver();return;}
   if(process.env.RISK_EVALUATION_ENABLED!=='true')return;
   if(job.name==='schedule-risk'){
@@ -58,6 +60,7 @@ async function bootstrap(){
  alertWorker.on('error',()=>console.error('alert.worker.error'));
  alertWorker.on('failed',(job)=>console.error(JSON.stringify({event:'alert.job.failed',id:job?.id})));
  await alertQueue.waitUntilReady();await alertWorker.waitUntilReady();
+ if(process.env.ANA_INGESTION_ENABLED==='true')await alertQueue.upsertJobScheduler('ana-poll-v1',{every:60000},{name:'ana-poll',data:{},opts:{removeOnComplete:30,removeOnFail:30}});else await alertQueue.removeJobScheduler('ana-poll-v1');
  await alertQueue.upsertJobScheduler('alert-maintenance-v1',{every:60000},{name:'maintenance',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
  if(process.env.RISK_EVALUATION_ENABLED==='true')await alertQueue.upsertJobScheduler('risk-v1',{every:900000},{name:'schedule-risk',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
  else await alertQueue.removeJobScheduler('risk-v1');

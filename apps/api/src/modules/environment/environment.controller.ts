@@ -1,4 +1,4 @@
-import {Body,Controller,Get,Post,Query,Req,UseGuards,Inject,BadRequestException} from '@nestjs/common';
+import {Body,Controller,Get,Post,Query,Req,UseGuards,Inject,BadRequestException,NotFoundException,Param} from '@nestjs/common';
 import {z} from 'zod';
 import {Database} from '../../common/database';
 import {audit} from '../../common/audit';
@@ -11,6 +11,18 @@ const input=z.object({municipalityId:uuid,provider:z.enum(['ana','cemaden']),sta
 @UseGuards(AuthGuard)
 export class EnvironmentController{
  constructor(@Inject(Database) private readonly db:Database,@Inject(GeoService) private readonly geo:GeoService){}
+ @Post('ana/targets') async registerAna(@Req() req:AuthRequest,@Body() body:unknown){
+  requirePlatform(req.actor);const v=parse(z.object({municipalityId:uuid,stationCode:z.string().regex(/^\d{8}$/),stationName:z.string().trim().min(1).max(150)}).strict(),body);await this.geo.scope(req.actor,v.municipalityId);
+  return this.db.transaction(async c=>{const row=(await c.query('INSERT INTO ana_targets(municipality_id,station_code,station_name) VALUES($1,$2,$3) ON CONFLICT(municipality_id,station_code) DO UPDATE SET station_name=excluded.station_name RETURNING id',[v.municipalityId,v.stationCode,v.stationName])).rows[0]!;await audit(c,req.actor.id,'ana.target.register',row.id);return row;});
+ }
+ @Get('ana/targets') async anaTargets(@Req() req:AuthRequest,@Query('municipalityId') raw:string){
+  const id=parse(uuid,raw);await this.geo.scope(req.actor,id);
+  return (await this.db.query(`SELECT t.*,v.observed_at,v.discharge_m3_s,v.discharge_quality FROM ana_targets t LEFT JOIN LATERAL(SELECT observed_at,discharge_m3_s,discharge_quality FROM ana_telemetry WHERE target_id=t.id ORDER BY observed_at DESC LIMIT 1)v ON true WHERE t.municipality_id=$1 ORDER BY t.station_name`,[id])).rows;
+ }
+ @Get('ana/targets/:id/history') async anaHistory(@Req() req:AuthRequest,@Param('id') raw:string){
+  const id=parse(uuid,raw);const t=(await this.db.query('SELECT municipality_id FROM ana_targets WHERE id=$1',[id])).rows[0];if(!t)throw new NotFoundException();await this.geo.scope(req.actor,t.municipality_id);
+  return (await this.db.query("SELECT observed_at,discharge_m3_s,discharge_quality FROM ana_telemetry WHERE target_id=$1 AND observed_at>=now()-interval '7 days' ORDER BY observed_at DESC LIMIT 1000",[id])).rows;
+ }
  @Post('imports') async upload(@Req() req:AuthRequest,@Body() body:unknown){
   requirePlatform(req.actor);const v=parse(input,body);await this.geo.scope(req.actor,v.municipalityId);
   const seen=new Set<string>();

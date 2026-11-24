@@ -10,7 +10,7 @@ module.exports = {
       name: 'watchful-worker', cwd: worker, script: path.join(worker, 'dist', 'main.js'),
       interpreter: process.execPath, instances: 1, exec_mode: 'fork', autorestart: true, watch: false,
       restart_delay: 2000, max_restarts: 10, min_uptime: 10000, kill_timeout: 30000, time: true,
-      env: { NODE_ENV: 'production', WEATHER_INGESTION_ENABLED: 'true', RISK_EVALUATION_ENABLED: 'false', ALERT_INTERNAL_PUBLICATION_ENABLED: 'false', OPEN_METEO_BASE_URL: 'https://api.open-meteo.com/v1/forecast', OPEN_METEO_API_KEY: '' }
+      env: { NODE_ENV: 'production', WEATHER_INGESTION_ENABLED: 'true', ANA_INGESTION_ENABLED: 'true', RISK_EVALUATION_ENABLED: 'false', ALERT_INTERNAL_PUBLICATION_ENABLED: 'false', OPEN_METEO_BASE_URL: 'https://api.open-meteo.com/v1/forecast', OPEN_METEO_API_KEY: '' }
     },
     {
       name: 'watchful-api',
