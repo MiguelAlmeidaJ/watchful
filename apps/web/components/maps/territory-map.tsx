@@ -27,5 +27,5 @@ export function TerritoryMap({layers,center,styleUrl,onBounds}:{layers:Territory
   });
   return()=>{map.current=null;m.remove();};
  },[longitude,latitude,styleUrl]);
- return <div><div ref={container} className="h-[480px] w-full rounded-lg" aria-label="Mapa territorial"/><p className="mt-2 text-xs text-slate-600">Classificação territorial cadastrada, não alerta em tempo real. Ausência de dados não indica segurança.</p></div>;
+ return <div><div ref={container} className="h-[clamp(320px,58vh,680px)] w-full overflow-hidden rounded-2xl border border-slate-200" aria-label="Mapa territorial"/><p className="mt-2 text-xs text-slate-600">Classificação territorial cadastrada, não alerta em tempo real. Ausência de dados não indica segurança.</p></div>;
 }
