@@ -12,6 +12,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.watchful.app"
-    }
+    },
+    "userInterfaceStyle": "automatic"
   }
 }
