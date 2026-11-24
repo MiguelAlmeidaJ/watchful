@@ -4,5 +4,5 @@ import { Database } from '../../common/database';
 export class HealthController {
  constructor(@Inject(Database) private readonly db:Database){}
  @Get('live') live(){return {status:'ok',service:'watchful-api',timestamp:new Date().toISOString()};}
- @Get('ready') async ready(){try{await this.db.query("SELECT 1 FROM schema_migrations WHERE name='010_historical_risk_sectors.sql'").then(r=>{if(!r.rowCount)throw new Error();});return {status:'ok',database:'ready'};}catch{throw new ServiceUnavailableException('Banco indisponível ou migração pendente');}}
+ @Get('ready') async ready(){try{await this.db.query("SELECT 1 FROM schema_migrations WHERE name='011_municipal_hydrology.sql'").then(r=>{if(!r.rowCount)throw new Error();});return {status:'ok',database:'ready'};}catch{throw new ServiceUnavailableException('Banco indisponível ou migração pendente');}}
 }

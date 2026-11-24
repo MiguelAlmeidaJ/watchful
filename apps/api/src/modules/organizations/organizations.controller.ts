@@ -38,6 +38,7 @@ export class OrganizationsController {
   requirePlatform(req.actor);const org=parse(uuid,id);const input=parse(z.object({userId:uuid,role:z.enum(['admin','operator','viewer'])}).strict(),body);
   return this.db.transaction(async c=>{
    if(!(await c.query('SELECT 1 FROM organizations WHERE id=$1',[org])).rowCount||!(await c.query('SELECT 1 FROM users WHERE id=$1 AND active',[input.userId])).rowCount)throw new NotFoundException();
+   if((await c.query('SELECT 1 FROM memberships WHERE user_id=$1 AND organization_id<>$2',[input.userId,org])).rowCount)throw new ConflictException('Usuário já vinculado a outro município');
    await c.query('INSERT INTO memberships(user_id,organization_id,role) VALUES($1,$2,$3) ON CONFLICT(user_id,organization_id) DO UPDATE SET role=excluded.role',[input.userId,org,input.role]);
    await audit(c,req.actor.id,'membership.upsert',input.userId,org,{role:input.role});return {success:true};
   });
@@ -50,7 +51,8 @@ export class OrganizationsController {
   requirePlatform(req.actor);const org=parse(uuid,id);const {municipalityId}=parse(z.object({municipalityId:uuid}).strict(),body);
   return this.db.transaction(async c=>{
    if(!(await c.query('SELECT 1 FROM organizations WHERE id=$1',[org])).rowCount||!(await c.query('SELECT 1 FROM municipalities WHERE id=$1',[municipalityId])).rowCount)throw new NotFoundException();
-   await c.query('INSERT INTO organization_municipalities VALUES($1,$2) ON CONFLICT DO NOTHING',[org,municipalityId]);await audit(c,req.actor.id,'municipality.assign',municipalityId,org);return {success:true};
+   if((await c.query('SELECT 1 FROM organization_municipalities WHERE (organization_id=$1 AND municipality_id<>$2) OR (municipality_id=$2 AND organization_id<>$1)',[org,municipalityId])).rowCount)throw new ConflictException('Organização ou município já vinculado a outro território');
+   await c.query('INSERT INTO organization_municipalities VALUES($1,$2) ON CONFLICT(organization_id,municipality_id) DO NOTHING',[org,municipalityId]);await audit(c,req.actor.id,'municipality.assign',municipalityId,org);return {success:true};
   });
  }
  @Post(':id/municipalities/ibge') async assignIbge(@Req() req:AuthRequest,@Param('id') id:string,@Body() body:unknown){
@@ -62,7 +64,8 @@ export class OrganizationsController {
   return this.db.transaction(async c=>{
    if(!(await c.query('SELECT 1 FROM organizations WHERE id=$1',[org])).rowCount)throw new NotFoundException();
    const m=(await c.query('INSERT INTO municipalities(ibge_code,name,state) VALUES($1,$2,$3) ON CONFLICT(ibge_code) DO UPDATE SET name=excluded.name,state=excluded.state RETURNING id,name,state,ibge_code',[input.ibgeCode,official.nome,input.state])).rows[0]!;
-   await c.query('INSERT INTO organization_municipalities VALUES($1,$2) ON CONFLICT DO NOTHING',[org,m.id]);
+   if((await c.query('SELECT 1 FROM organization_municipalities WHERE (organization_id=$1 AND municipality_id<>$2) OR (municipality_id=$2 AND organization_id<>$1)',[org,m.id])).rowCount)throw new ConflictException('Organização ou município já vinculado a outro território');
+   await c.query('INSERT INTO organization_municipalities VALUES($1,$2) ON CONFLICT(organization_id,municipality_id) DO NOTHING',[org,m.id]);
    await audit(c,req.actor.id,'municipality.assign_ibge',m.id,org,{ibgeCode:input.ibgeCode});return m;
   });
  }
