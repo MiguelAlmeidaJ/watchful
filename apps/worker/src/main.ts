@@ -14,6 +14,11 @@ async function bootstrap(){
  const ingestion=new Ingestion(pool);
  const worker=new Worker('weather.ingestion',async job=>{
   if(process.env.WEATHER_INGESTION_ENABLED!=='true')return;
+  if(job.name==='dispatch-manual'){
+   const c=await pool.connect();try{await c.query('BEGIN');const rows=(await c.query('SELECT id,target_kind,target_id FROM weather_sync_requests WHERE dispatched_at IS NULL ORDER BY requested_at LIMIT 20 FOR UPDATE SKIP LOCKED')).rows;
+    for(const row of rows){await queue.add('collect',{kind:row.target_kind,id:row.target_id},{jobId:'manual-'+row.id,attempts:3,backoff:{type:'exponential',delay:30000},removeOnComplete:{age:172800,count:10000},removeOnFail:{age:604800,count:10000}});await c.query('UPDATE weather_sync_requests SET dispatched_at=now() WHERE id=$1',[row.id]);}
+    await c.query('COMMIT');}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}return;
+  }
   if(job.name==='schedule-observations'||job.name==='schedule-forecasts'){
    const kind:TargetKind=job.name==='schedule-observations'?'station':'forecast_location';
    const table=kind==='station'?'stations':'forecast_locations';
@@ -29,12 +34,13 @@ async function bootstrap(){
  worker.on('error',()=>console.error(JSON.stringify({event:'weather.worker.error'})));
  await queue.waitUntilReady();await worker.waitUntilReady();
  if(process.env.WEATHER_INGESTION_ENABLED==='true'){
+  await queue.upsertJobScheduler('manual-v1',{every:15000},{name:'dispatch-manual',data:{},opts:{removeOnComplete:30,removeOnFail:30}});
   await queue.upsertJobScheduler('observations-v1',{every:900000},{name:'schedule-observations',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
   await queue.upsertJobScheduler('forecasts-v1',{every:3600000},{name:'schedule-forecasts',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
   // First collection is queued on startup, using the same deduplication bucket.
   for(const kind of ['station','forecast_location'] as const){const table=kind==='station'?'stations':'forecast_locations';const targets=(await pool.query('SELECT id FROM '+table+" WHERE enabled"+(kind==='station'?" AND lower(provider)='inmet'":""))).rows;const bucket=Math.floor(Date.now()/(kind==='station'?900000:3600000));for(const t of targets)await queue.add('collect',{kind,id:t.id},{jobId:kind+'-'+t.id+'-'+bucket,attempts:3,backoff:{type:'exponential',delay:30000},removeOnComplete:{age:172800,count:10000},removeOnFail:{age:604800,count:10000}});}
  }else{
-  await queue.removeJobScheduler('observations-v1');await queue.removeJobScheduler('forecasts-v1');
+  await queue.removeJobScheduler('manual-v1');await queue.removeJobScheduler('observations-v1');await queue.removeJobScheduler('forecasts-v1');
  }
  const alertQueue=new Queue('alerts.processing',{connection});
  const processor=new AlertProcessor(pool);
