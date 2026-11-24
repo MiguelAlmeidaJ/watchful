@@ -26,3 +26,14 @@ Mobile: ajuste EXPO_PUBLIC_API_URL para o IP LAN ou endereço do emulador; confi
 
 A base ainda não foi executada nem testada. Nenhuma emissão de alerta real está habilitada. Não usar como sistema de emergência.
 Veja docs/roadmap.md e docs/architecture.md.
+
+## Validação local com PM2 (builds de produção)
+Com Docker saudável, migrações aplicadas e administrador criado, instalar PM2 se necessário (`npm install -g pm2`). Na raiz:
+
+```bash
+pnpm build:pm2
+pm2 start ecosystem.config.cjs
+pm2 status
+```
+
+Web: http://localhost:3005 — API: http://localhost:4005/api/v1/health/live e /health/ready. A API usa as credenciais do .env da raiz; PM2 sobrescreve portas, origem CORS e flags operacionais para este perfil local. Next.js recebe NEXT_PUBLIC_API_URL durante o build, não apenas na execução. Ambos escutam em loopback; não são acessíveis a dispositivos externos. Swagger está desativado em NODE_ENV=production. O worker não é iniciado. Para atualizar: `pnpm build:pm2` e `pm2 restart ecosystem.config.cjs --update-env`. Para parar: `pm2 stop watchful-api watchful-web`. Não usar este perfil como implantação pública. Node 22 continua sendo a versão suportada.

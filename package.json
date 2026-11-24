@@ -12,7 +12,8 @@
     "typecheck": "turbo run typecheck",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
-    "db:migrate": "pnpm --filter @watchful/database migrate"
+    "db:migrate": "pnpm --filter @watchful/database migrate",
+    "build:pm2": "pnpm --filter @watchful/api build && node scripts/build-web-pm2.cjs"
   },
   "devDependencies": {
     "turbo": "^2.5.0",
