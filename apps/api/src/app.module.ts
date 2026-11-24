@@ -9,5 +9,6 @@ import { GeoModule } from './modules/geo/geo.module';
 import { AlertsModule } from './modules/alerts/alerts.module';
 import { EnvironmentModule } from './modules/environment/environment.module';
 import {HydrologyModule} from './modules/hydrology/hydrology.module';
-@Module({imports:[DatabaseModule,AuthModule,WeatherModule,GeoModule,AlertsModule,EnvironmentModule,HydrologyModule],controllers:[HealthController,OrganizationsController,TerritoryController]})
+import {PublicController} from './modules/public/public.controller';
+@Module({imports:[DatabaseModule,AuthModule,WeatherModule,GeoModule,AlertsModule,EnvironmentModule,HydrologyModule],controllers:[PublicController,HealthController,OrganizationsController,TerritoryController]})
 export class AppModule {}

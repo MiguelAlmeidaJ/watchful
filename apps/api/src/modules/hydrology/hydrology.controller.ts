@@ -18,7 +18,7 @@ export class HydrologyController{
   const id=parse(uuid,raw);await this.geo.scope(req.actor,id);
   const municipality=(await this.db.query('SELECT main_river,main_river_source FROM municipalities WHERE id=$1',[id])).rows[0];
   const rivers=(await this.db.query('SELECT count(*)::int AS count,count(DISTINCT name)::int AS named_groups FROM hydro_features WHERE municipality_id=$1',[id])).rows[0];
-  const compositions=(await this.db.query('SELECT id,name,source,station_codes,margin_m3_s,updated_at FROM hydro_compositions WHERE municipality_id=$1 AND archived_at IS NULL ORDER BY name',[id])).rows;
+  const compositions=(await this.db.query('SELECT c.id,c.name,c.source,c.station_codes,c.margin_m3_s,c.updated_at,(c.id=m.public_flow_composition_id) IS TRUE AS public_main FROM hydro_compositions c JOIN municipalities m ON m.id=c.municipality_id WHERE c.municipality_id=$1 AND c.archived_at IS NULL ORDER BY c.name',[id])).rows;
   const data=[];
   for(const c of compositions){
    const members=(await this.db.query(`SELECT code AS station_code,t.station_name,t.enabled,t.last_error,t.last_success_at,v.observed_at,v.discharge_m3_s,v.discharge_quality FROM unnest($2::text[]) code LEFT JOIN ana_targets t ON t.municipality_id=$1 AND t.station_code=code AND t.archived_at IS NULL LEFT JOIN LATERAL(SELECT observed_at,discharge_m3_s,discharge_quality FROM ana_telemetry WHERE target_id=t.id ORDER BY observed_at DESC LIMIT 1)v ON true`,[id,c.station_codes])).rows;
@@ -86,6 +86,10 @@ export class HydrologyController{
    if(!row)throw new BadRequestException('Composição não encontrada neste município');
    await audit(c,req.actor.id,'hydrology.composition',row.id,null,{municipalityId:v.municipalityId,name:v.name,stationCodes:v.stationCodes,marginM3s:v.marginM3s,source:v.source});return row;
   });
+ }
+ @Post('compositions/public-main') async publicMain(@Req() req:AuthRequest,@Body() body:unknown){
+  requirePlatform(req.actor);const v=parse(z.object({municipalityId:uuid,id:uuid.nullable()}).strict(),body);await this.geo.scope(req.actor,v.municipalityId);
+  return this.db.transaction(async c=>{await c.query('SELECT id FROM municipalities WHERE id=$1 FOR UPDATE',[v.municipalityId]);if(v.id&&!(await c.query('SELECT 1 FROM hydro_compositions WHERE id=$1 AND municipality_id=$2 AND archived_at IS NULL',[v.id,v.municipalityId])).rowCount)throw new BadRequestException('Composição não encontrada neste município');await c.query('UPDATE municipalities SET public_flow_composition_id=$2 WHERE id=$1',[v.municipalityId,v.id]);await audit(c,req.actor.id,'hydrology.public-main',v.municipalityId,null,{compositionId:v.id});return {success:true};});
  }
  @Post('compositions/archive') async archiveComposition(@Req() req:AuthRequest,@Body() body:unknown){
   requirePlatform(req.actor);const v=parse(z.object({municipalityId:uuid,id:uuid}).strict(),body);await this.geo.scope(req.actor,v.municipalityId);
