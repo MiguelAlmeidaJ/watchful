@@ -4,5 +4,6 @@ import { AuthModule } from './modules/auth/auth.module';
 import { OrganizationsController } from './modules/organizations/organizations.controller';
 import { TerritoryController } from './modules/territory/territory.controller';
 import { HealthController } from './modules/health/health.controller';
-@Module({imports:[DatabaseModule,AuthModule],controllers:[HealthController,OrganizationsController,TerritoryController]})
+import { WeatherModule } from './modules/weather/weather.module';
+@Module({imports:[DatabaseModule,AuthModule,WeatherModule],controllers:[HealthController,OrganizationsController,TerritoryController]})
 export class AppModule {}

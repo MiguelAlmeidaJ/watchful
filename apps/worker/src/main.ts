@@ -1,16 +1,40 @@
 import { config } from 'dotenv';
 import { resolve } from 'node:path';
-import { Queue } from 'bullmq';
-import Redis from 'ioredis';
-config({ path: resolve(__dirname, '../../../.env') });
-async function bootstrap() {
-  const connection = new Redis(process.env.REDIS_QUEUE_URL ?? 'redis://localhost:6380', { maxRetriesPerRequest: null });
-  const queue = new Queue('weather.ingestion', { connection });
-  await queue.waitUntilReady();
-  console.log('Watchful worker foundation connected; ingestion processors not enabled.');
-  let closing = false;
-  const shutdown = async () => { if (closing) return; closing = true; await queue.close(); await connection.quit(); };
-  process.once('SIGINT', shutdown);
-  process.once('SIGTERM', shutdown);
+import { Queue,Worker } from 'bullmq';
+import { Pool } from 'pg';
+import { Ingestion, type TargetKind } from './weather/ingestion';
+config({path:resolve(__dirname,'../../../.env')});
+async function bootstrap(){
+ if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL required');
+ const redis=new URL(process.env.REDIS_QUEUE_URL??'redis://localhost:6380');
+ const connection={host:redis.hostname,port:Number(redis.port||6379),username:redis.username?decodeURIComponent(redis.username):undefined,password:redis.password?decodeURIComponent(redis.password):undefined,db:Number(redis.pathname.slice(1)||0),...(redis.protocol==='rediss:'?{tls:{}}:{})};
+ const pool=new Pool({connectionString:process.env.DATABASE_URL,max:6,connectionTimeoutMillis:5000});
+ const queue=new Queue('weather.ingestion',{connection});
+ const ingestion=new Ingestion(pool);
+ const worker=new Worker('weather.ingestion',async job=>{
+  if(job.name==='schedule-observations'||job.name==='schedule-forecasts'){
+   const kind:TargetKind=job.name==='schedule-observations'?'station':'forecast_location';
+   const table=kind==='station'?'stations':'forecast_locations';
+   const targets=(await pool.query('SELECT id FROM '+table+" WHERE enabled"+(kind==='station'?" AND lower(provider)='inmet'":""))).rows;
+   const bucket=Math.floor(Date.now()/(kind==='station'?900000:3600000));
+   for(const target of targets)await queue.add('collect',{kind,id:target.id},{jobId:kind+'-'+target.id+'-'+bucket,attempts:3,backoff:{type:'exponential',delay:30000},removeOnComplete:{age:172800,count:10000},removeOnFail:{age:604800,count:10000}});
+   return;
+  }
+  if(job.name!=='collect'||!['station','forecast_location'].includes(job.data.kind)||typeof job.data.id!=='string')throw new Error('INVALID_JOB');
+  await ingestion.run(job.data.kind,job.data.id);
+ },{connection,concurrency:3,limiter:{max:10,duration:60000}});
+ worker.on('failed',(job,error)=>console.error(JSON.stringify({event:'weather.job.failed',jobId:job?.id,code:error.message})));
+ worker.on('error',()=>console.error(JSON.stringify({event:'weather.worker.error'})));
+ await queue.waitUntilReady();await worker.waitUntilReady();
+ if(process.env.WEATHER_INGESTION_ENABLED==='true'){
+  await queue.upsertJobScheduler('observations-v1',{every:900000},{name:'schedule-observations',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
+  await queue.upsertJobScheduler('forecasts-v1',{every:3600000},{name:'schedule-forecasts',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
+ }else{
+  await queue.removeJobScheduler('observations-v1');await queue.removeJobScheduler('forecasts-v1');
+ }
+ console.log('Watchful weather worker ready');
+ let closing=false;
+ const shutdown=async()=>{if(closing)return;closing=true;await worker.close();await queue.close();await pool.end();};
+ process.once('SIGINT',()=>void shutdown());process.once('SIGTERM',()=>void shutdown());
 }
-bootstrap().catch(error => { console.error(error); process.exit(1); });
+bootstrap().catch(error=>{console.error(error instanceof Error?error.name:'Startup failed');process.exit(1);});
