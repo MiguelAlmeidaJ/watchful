@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Param, Req, UseGuards, Inject, ForbiddenException, NotFoundException, ConflictException } from '@nestjs/common';
+import { Body, Controller, Get, Post, Param, Req, UseGuards, Inject, ForbiddenException, NotFoundException, ConflictException, BadGatewayException } from '@nestjs/common';
 import { z } from 'zod';
 import { Database } from '../../common/database';
 import { audit } from '../../common/audit';
@@ -51,6 +51,19 @@ export class OrganizationsController {
   return this.db.transaction(async c=>{
    if(!(await c.query('SELECT 1 FROM organizations WHERE id=$1',[org])).rowCount||!(await c.query('SELECT 1 FROM municipalities WHERE id=$1',[municipalityId])).rowCount)throw new NotFoundException();
    await c.query('INSERT INTO organization_municipalities VALUES($1,$2) ON CONFLICT DO NOTHING',[org,municipalityId]);await audit(c,req.actor.id,'municipality.assign',municipalityId,org);return {success:true};
+  });
+ }
+ @Post(':id/municipalities/ibge') async assignIbge(@Req() req:AuthRequest,@Param('id') id:string,@Body() body:unknown){
+  requirePlatform(req.actor);const org=parse(uuid,id);const input=parse(z.object({ibgeCode:z.string().regex(/^\d{7}$/),state:z.string().regex(/^[A-Z]{2}$/)}).strict(),body);
+  let raw:unknown;try{const res=await fetch('https://servicodados.ibge.gov.br/api/v1/localidades/estados/'+input.state+'/municipios',{signal:AbortSignal.timeout(15000)});if(!res.ok)throw new Error();raw=await res.json();}catch{throw new BadGatewayException('Não foi possível consultar o IBGE');}
+  const parsed=z.array(z.object({id:z.number().int(),nome:z.string().min(1).max(150)})).max(1000).safeParse(raw);
+  if(!parsed.success)throw new BadGatewayException('Resposta inválida do IBGE');
+  const official=parsed.data.find(m=>String(m.id)===input.ibgeCode);if(!official)throw new NotFoundException('Município não encontrado na UF selecionada');
+  return this.db.transaction(async c=>{
+   if(!(await c.query('SELECT 1 FROM organizations WHERE id=$1',[org])).rowCount)throw new NotFoundException();
+   const m=(await c.query('INSERT INTO municipalities(ibge_code,name,state) VALUES($1,$2,$3) ON CONFLICT(ibge_code) DO UPDATE SET name=excluded.name,state=excluded.state RETURNING id,name,state,ibge_code',[input.ibgeCode,official.nome,input.state])).rows[0]!;
+   await c.query('INSERT INTO organization_municipalities VALUES($1,$2) ON CONFLICT DO NOTHING',[org,m.id]);
+   await audit(c,req.actor.id,'municipality.assign_ibge',m.id,org,{ibgeCode:input.ibgeCode});return m;
   });
  }
  @Get(':id/audit') async logs(@Req() req:AuthRequest,@Param('id') id:string){
