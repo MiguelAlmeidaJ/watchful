@@ -4,10 +4,12 @@ import { resolve } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ErrorsFilter } from './common/errors.filter';
+import { json } from 'express';
 import { AppModule } from './app.module';
 config({ path: resolve(__dirname, '../../../.env') });
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  app.use(json({limit:'2mb'}));
   app.useGlobalFilters(new ErrorsFilter());
   app.setGlobalPrefix('api/v1');
   app.enableCors({ origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000' });

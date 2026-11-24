@@ -5,5 +5,6 @@ import { OrganizationsController } from './modules/organizations/organizations.c
 import { TerritoryController } from './modules/territory/territory.controller';
 import { HealthController } from './modules/health/health.controller';
 import { WeatherModule } from './modules/weather/weather.module';
-@Module({imports:[DatabaseModule,AuthModule,WeatherModule],controllers:[HealthController,OrganizationsController,TerritoryController]})
+import { GeoModule } from './modules/geo/geo.module';
+@Module({imports:[DatabaseModule,AuthModule,WeatherModule,GeoModule],controllers:[HealthController,OrganizationsController,TerritoryController]})
 export class AppModule {}
