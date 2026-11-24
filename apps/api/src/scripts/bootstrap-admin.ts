@@ -12,7 +12,7 @@ async function main(){
  try{await c.query('BEGIN');await c.query('SELECT pg_advisory_xact_lock(728124)');
  if((await c.query('SELECT 1 FROM users WHERE platform_admin')).rowCount)throw new Error('Platform administrator already exists');
  const result=await c.query('INSERT INTO users(email,password_hash,platform_admin) VALUES($1,$2,true) RETURNING id',[address,await hashPassword(secret)]);
- await c.query("INSERT INTO audit_logs(actor_id,action,target) VALUES($1,'admin.bootstrap',$1::text)",[result.rows[0]!.id]);
+ await c.query("INSERT INTO audit_logs(actor_id,action,target) VALUES($1::uuid,'admin.bootstrap',($1::uuid)::text)",[result.rows[0]!.id]);
  await c.query('COMMIT');console.log('Platform administrator created');
  }catch(e){await c.query('ROLLBACK');throw e;}finally{await c.end();}
 }
