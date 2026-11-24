@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_USER: watchful_test
+          POSTGRES_PASSWORD: watchful_test_local
+          POSTGRES_DB: watchful_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd 'pg_isready -U watchful_test -d watchful_test'
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Worker unit tests
+        run: pnpm --filter @watchful/worker test
+      - name: PostgreSQL/PostGIS integration
+        env:
+          WATCHFUL_TEST_DATABASE_URL: postgresql://watchful_test:watchful_test_local@127.0.0.1:${{ job.services.postgres.ports[5432] }}/watchful_test
+        run: pnpm test:weather:integration
+      - name: Production builds
+        run: pnpm build

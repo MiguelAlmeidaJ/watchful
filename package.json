@@ -1,0 +1,24 @@
+{
+  "name": "watchful",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.11.0",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test:weather:integration": "pnpm --filter @watchful/api --filter @watchful/worker build && node --test scripts/weather.integration.test.cjs",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "db:migrate": "pnpm --filter @watchful/database migrate",
+    "build:pm2": "pnpm --filter @watchful/api build && pnpm --filter @watchful/worker build && node scripts/build-web-pm2.cjs"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "~5.8.3",
+    "@types/node": "^22.0.0"
+  }
+}

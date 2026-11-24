@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-watchful}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?configure .env}
+      POSTGRES_DB: ${POSTGRES_DB:-watchful}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-watchful} -d ${POSTGRES_DB:-watchful}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis-cache:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    ports: ["127.0.0.1:6379:6379"]
+  redis-queue:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports: ["127.0.0.1:6380:6379"]
+    volumes: [queue_data:/data]
+volumes:
+  postgres_data:
+  queue_data:
