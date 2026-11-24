@@ -13,7 +13,7 @@ export class TerritoryController {
  constructor(@Inject(Database) private readonly db:Database){}
  @Get('municipalities') async list(@Req() req:AuthRequest,@Query() query:unknown){
   const q=parse(pagination.extend({state:state.optional(),search:z.string().trim().max(150).optional()}),query);
-  return (await this.db.query('SELECT id,ibge_code,name,state FROM municipalities m WHERE ($1::text IS NULL OR m.state=$1) AND ($2::boolean OR EXISTS (SELECT 1 FROM organization_municipalities om JOIN memberships ms ON ms.organization_id=om.organization_id WHERE om.municipality_id=m.id AND ms.user_id=$3)) AND ($6::text IS NULL OR translate(lower(m.name),'áàâãäéèêëíìîïóòôõöúùûüç','aaaaaeeeeiiiiooooouuuuc') LIKE '%' || translate(lower($6),'áàâãäéèêëíìîïóòôõöúùûüç','aaaaaeeeeiiiiooooouuuuc') || '%' OR m.ibge_code=$6) ORDER BY name,id LIMIT $4 OFFSET $5',[q.state??null,req.actor.platformAdmin,req.actor.id,q.limit,q.offset,q.search||null])).rows;
+  return (await this.db.query(`SELECT id,ibge_code,name,state FROM municipalities m WHERE ($1::text IS NULL OR m.state=$1) AND ($2::boolean OR EXISTS (SELECT 1 FROM organization_municipalities om JOIN memberships ms ON ms.organization_id=om.organization_id WHERE om.municipality_id=m.id AND ms.user_id=$3)) AND ($6::text IS NULL OR translate(lower(m.name),'áàâãäéèêëíìîïóòôõöúùûüç','aaaaaeeeeiiiiooooouuuuc') LIKE '%' || translate(lower($6),'áàâãäéèêëíìîïóòôõöúùûüç','aaaaaeeeeiiiiooooouuuuc') || '%' OR m.ibge_code=$6) ORDER BY name,id LIMIT $4 OFFSET $5`,[q.state??null,req.actor.platformAdmin,req.actor.id,q.limit,q.offset,q.search||null])).rows;
  }
  @Post('municipalities') async create(@Req() req:AuthRequest,@Body() body:unknown){
   requirePlatform(req.actor);const input=parse(municipality,body);
