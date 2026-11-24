@@ -8,7 +8,9 @@ export class AlertProcessor{
    const initial=(await c.query('SELECT organization_id,area_id FROM risk_rules WHERE id=$1',[id])).rows[0];if(!initial)return;
    await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[initial.organization_id+':'+initial.area_id]);
    const r=(await c.query(`SELECT r.*,a.municipality_id,a.classification,a.updated_at AS area_updated_at,s.enabled AS station_enabled,s.last_success_at,s.consecutive_failures,s.municipality_id AS station_municipality,date_trunc('hour',now(),'UTC') AS window_end FROM risk_rules r JOIN risk_areas a ON a.id=r.area_id JOIN stations s ON s.id=r.station_id JOIN organization_municipalities om ON om.organization_id=r.organization_id AND om.municipality_id=a.municipality_id WHERE r.id=$1 AND r.active AND a.active FOR SHARE OF a,s`,[id])).rows[0];if(!r)return;
-   const rows=(await c.query(`SELECT id,observed_at,precipitation_mm FROM weather_readings WHERE station_id=$1 AND observed_at>$2::timestamptz-make_interval(hours=>$3) AND observed_at<=$2 AND quality='valid' AND precipitation_mm IS NOT NULL AND interval_minutes=60 AND observed_at=date_trunc('hour',observed_at,'UTC') ORDER BY observed_at`,[r.station_id,r.window_end,r.window_hours])).rows;
+   const rows=(await c.query(`SELECT id,observed_at,precipitation_mm FROM hourly_precipitation
+    WHERE station_id=$1 AND observed_at>$2::timestamptz-make_interval(hours=>$3) AND observed_at<=$2
+    AND precipitation_quality='valid' ORDER BY observed_at`,[r.station_id,r.window_end,r.window_hours])).rows;
    const readings=rows.map(x=>({id:String(x.id),mm:Number(x.precipitation_mm),observedAt:new Date(x.observed_at).toISOString()}));
    const eligible=r.classification!=='unknown'&&r.station_enabled&&r.station_municipality===r.municipality_id&&r.consecutive_failures===0&&!!r.last_success_at&&Date.now()-Date.parse(r.last_success_at)<=180*60000;
    const result=evaluate({hours:r.window_hours,readings,eligible,attention:Number(r.attention_mm),warning:Number(r.warning_mm),severe:Number(r.severe_mm)});

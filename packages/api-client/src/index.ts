@@ -5,9 +5,9 @@ export type Station={id:string;name:string;provider:string;latitude:number;longi
 export type Profile={id:string;email:string;platformAdmin:boolean};
 export type Alert={id:string;title:string;message:string;severity:string;origin:string;status:string;starts_at:string;expires_at:string;source:string};
 export type Notice={id:string;title:string;event_type:string;read_at:string|null;created_at:string;severity:string};
-export type Reading={temperature_c:string|number|null;precipitation_mm:string|number|null;humidity_pct:string|number|null;wind_kmh:string|number|null;observed_at:string;quality:string};
+export type Reading={temperature_c:string|number|null;precipitation_mm:string|number|null;humidity_pct:string|number|null;wind_kmh:string|number|null;observed_at:string;quality:string;precipitation_quality?:'valid'|'suspect'|'missing'};
 export type Current={status:string;reading:Reading|null;ageMinutes:number|null};
-export type Rainfall={windows:{hours:number;totalMm:number|null;partialMm:number|null;coverage:number;complete:boolean}[]};
+export type Rainfall={windows:{hours:number;totalMm:number|null;partialMm:number|null;coverage:number;complete:boolean;suspectHours?:number;missingHours?:number}[]};
 export type Forecast={status:string;fetchedAt:string|null;data:{valid_at:string;temperature_c:string|null;precipitation_mm:string|null;precipitation_probability_pct:string|null}[]};
 export type Row=Record<string,unknown>;
 export class ApiError extends Error{constructor(readonly status:number,message:string){super(message);}}
@@ -40,5 +40,5 @@ export type Client=ReturnType<typeof createClient>;
 export const query=(values:Record<string,string|number>)=>'?'+Object.entries(values).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(String(v))).join('&');
 export const formatDate=(v:unknown)=>typeof v==='string'&&!Number.isNaN(Date.parse(v))?new Date(v).toLocaleString('pt-BR'):'—';
 export const metric=(v:unknown,unit:string)=>v===null||v===undefined?'Indisponível':String(v)+' '+unit;
-export const labels:Record<string,string>={available:'Disponível',degraded:'Degradado',stale:'Desatualizado',unknown:'Indeterminado',disabled:'Desativado',draft:'Rascunho',approved:'Aprovado',published:'Publicado internamente',cancelled:'Cancelado',expired:'Expirado',attention:'Atenção',warning:'Alerta',severe:'Severo',normal:'Abaixo do limiar',official:'Oficial (importado)',manual:'Manual',calculated:'Calculado',reported:'Registrado',verified:'Verificado',resolved:'Resolvido',dismissed:'Descartado',unverified:'Não verificado',full:'Lotado',unavailable:'Indisponível'};
+export const labels:Record<string,string>={valid:'Válida',suspect:'Suspeita',missing:'Ausente',available:'Disponível',degraded:'Degradado',stale:'Desatualizado',unknown:'Indeterminado',disabled:'Desativado',draft:'Rascunho',approved:'Aprovado',published:'Publicado internamente',cancelled:'Cancelado',expired:'Expirado',attention:'Atenção',warning:'Alerta',severe:'Severo',normal:'Abaixo do limiar',official:'Oficial (importado)',manual:'Manual',calculated:'Calculado',reported:'Registrado',verified:'Verificado',resolved:'Resolvido',dismissed:'Descartado',unverified:'Não verificado',full:'Lotado',unavailable:'Indisponível'};
 export const label=(v:unknown)=>labels[String(v)]??String(v??'—');

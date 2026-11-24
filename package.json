@@ -10,6 +10,7 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
+    "test:weather:integration": "pnpm --filter @watchful/api --filter @watchful/worker build && node --test scripts/weather.integration.test.cjs",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
     "db:migrate": "pnpm --filter @watchful/database migrate",

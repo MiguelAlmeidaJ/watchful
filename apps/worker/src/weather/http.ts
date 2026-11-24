@@ -1,11 +1,33 @@
 export async function fetchJson(url:URL):Promise<unknown>{
- const response=await fetch(url,{signal:AbortSignal.timeout(20000),headers:{Accept:'application/json'}});
+ const response=await fetch(url,{signal:AbortSignal.timeout(20000),redirect:'error',headers:{Accept:'application/json'}});
  if(!response.ok)throw new Error('PROVIDER_HTTP_'+response.status);
- return response.json();
+ if (!response.body) throw new Error('INVALID_PROVIDER_JSON');
+ const reader = response.body.getReader();
+ const chunks: Uint8Array[] = [];
+ let bytes = 0;
+ try {
+  for (;;) {
+   const { done, value } = await reader.read();
+   if (done) break;
+   bytes += value.byteLength;
+   if (bytes > 4_000_000) {
+    await reader.cancel();
+    throw new Error('PROVIDER_RESPONSE_TOO_LARGE');
+   }
+   chunks.push(value);
+  }
+ } finally {
+  reader.releaseLock();
+ }
+ try {
+  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+ } catch {
+  throw new Error('INVALID_PROVIDER_JSON');
+ }
 }
 export function numeric(value:unknown,min:number,max:number):number|null {
  if(typeof value!=='number'&&typeof value!=='string')return null;
- if(typeof value==='string'&&!value.trim())return null;
+ if (typeof value === 'string' && !/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim())) return null;
  const n=Number(value);return Number.isFinite(n)&&n>=min&&n<=max?n:null;
 }
 export function utcHour(value:unknown):string|null {

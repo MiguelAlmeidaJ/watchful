@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg';
 import { Database } from '../../common/database';
 import type { Actor } from '../auth/auth.guard';
 import { audit } from '../../common/audit';
+import type { HistoricalSectorImport } from './geo.schemas';
 export type Geometry=object;
 @Injectable()
 export class GeoService {
@@ -50,6 +51,42 @@ export class GeoService {
    }
    await audit(c,actor.id,'geo.risk.import',input.municipalityId,null,{source:input.source,received:input.collection.features.length,changed:ids.length});
    return {received:input.collection.features.length,changed:ids.length,ids};
+  });
+ }
+ async importHistoricalSectors(actor: Actor, input: HistoricalSectorImport) {
+  const { municipalityId, source, sourceUrl, sourceVersion, collection } = input;
+  return this.db.transaction(async client => {
+   const municipality = (await client.query<{ boundary_known: boolean }>(
+    'SELECT boundary IS NOT NULL AS boundary_known FROM municipalities WHERE id = $1 FOR SHARE', [municipalityId]
+   )).rows[0];
+   if (!municipality) throw new NotFoundException();
+   if (!municipality.boundary_known) throw new ConflictException('Importe o limite municipal antes de cadastrar setores históricos');
+
+   let changed = 0;
+   for (const { geometry, properties } of collection.features) {
+    await this.polygon(client, geometry);
+    const rawGeometry = JSON.stringify(geometry);
+    const overlap = await client.query(`SELECT 1 FROM municipalities
+     WHERE id = $1 AND ST_Intersects(boundary, ST_SetSRID(ST_GeomFromGeoJSON($2::text), 4326))`, [municipalityId, rawGeometry]);
+    if (!overlap.rowCount) throw new BadRequestException(`Setor ${properties.externalId} sem interseção com a malha municipal`);
+
+    const result = await client.query(`INSERT INTO historical_risk_sectors
+     (municipality_id, source, source_url, source_version, external_id, name, source_hazard, source_classification, survey_date, boundary)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($10::text),4326)))
+     ON CONFLICT (municipality_id, source, source_version, external_id) DO UPDATE SET
+       source_url = excluded.source_url, name = excluded.name, source_hazard = excluded.source_hazard,
+       source_classification = excluded.source_classification, survey_date = excluded.survey_date, boundary = excluded.boundary,
+       imported_at = now()
+     WHERE (historical_risk_sectors.source_url, historical_risk_sectors.name, historical_risk_sectors.source_hazard,
+            historical_risk_sectors.source_classification, historical_risk_sectors.survey_date)
+        IS DISTINCT FROM (excluded.source_url, excluded.name, excluded.source_hazard, excluded.source_classification, excluded.survey_date)
+        OR NOT ST_Equals(historical_risk_sectors.boundary, excluded.boundary)`, [municipalityId, source, sourceUrl, sourceVersion,
+     properties.externalId, properties.name, properties.sourceHazard, properties.sourceClassification, properties.surveyDate, rawGeometry]);
+    changed += result.rowCount ?? 0;
+   }
+   const received = collection.features.length;
+   await audit(client, actor.id, 'geo.historical-sectors.import', municipalityId, null, { source, sourceVersion, received, changed });
+   return { received, changed };
   });
  }
  async snapshot(c:PoolClient,id:string,actor:string){

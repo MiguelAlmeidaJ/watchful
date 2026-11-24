@@ -1,6 +1,6 @@
 # Watchful
 
-Plataforma de monitoramento climático, inteligência territorial e alertas. Implementação independente, em desenvolvimento na branch create.
+Plataforma de monitoramento climático, inteligência territorial e alertas. O [acompanhamento do piloto](docs/piloto/PROGRESS.md) registra o estado verificado e as pendências.
 
 ## Fundação
 - apps/web: Next.js, Tailwind, Lucide
@@ -10,22 +10,22 @@ Plataforma de monitoramento climático, inteligência territorial e alertas. Imp
 - packages/database: PostgreSQL/PostGIS e migrações
 - packages/contracts: contratos TypeScript
 
-## Ambiente local (executar somente na etapa de validação)
+## Ambiente local
 Requisitos: Node 22, pnpm 10.11.0, Docker Compose.
 Copie .env.example para .env, configure portas e credenciais locais.
-1. pnpm install (gerar e versionar pnpm-lock.yaml após validação)
+1. `pnpm install --frozen-lockfile`
 2. pnpm infra:up
 3. pnpm db:migrate
-4. pnpm dev
-5. pnpm typecheck e pnpm build
+4. Configure as variáveis temporárias de bootstrap e execute `pnpm --filter @watchful/api admin:bootstrap`. Remova as credenciais de bootstrap do arquivo após o uso.
+5. pnpm dev
+6. pnpm typecheck e pnpm build
 
 Web: http://localhost:3000
 API: http://localhost:4000/api/v1/health/live
 Swagger: http://localhost:4000/docs
 Mobile: ajuste EXPO_PUBLIC_API_URL para o IP LAN ou endereço do emulador; configure o arquivo .env no diretório do app se necessário.
 
-A base ainda não foi executada nem testada. Nenhuma emissão de alerta real está habilitada. Não usar como sistema de emergência.
-Veja docs/roadmap.md e docs/architecture.md.
+O ambiente ainda está em validação para piloto. Avaliação automática e publicação interna estão desabilitadas no `.env.example`. Consulte a [arquitetura](docs/architecture.md), o [plano do piloto](docs/piloto/EXECUTION_PLAN.md) e as [evidências](docs/piloto/VALIDATION.md).
 
 ## Validação local com PM2 (builds de produção)
 Com Docker saudável, migrações aplicadas e administrador criado, instalar PM2 se necessário (`npm install -g pm2`). Na raiz:
@@ -36,4 +36,19 @@ pm2 start ecosystem.config.cjs
 pm2 status
 ```
 
-Web: http://localhost:3005 — API: http://localhost:4005/api/v1/health/live e /health/ready. A API usa as credenciais do .env da raiz; PM2 sobrescreve portas, origem CORS e flags operacionais para este perfil local. Next.js recebe NEXT_PUBLIC_API_URL durante o build, não apenas na execução. Ambos escutam em loopback; não são acessíveis a dispositivos externos. Swagger está desativado em NODE_ENV=production. O worker não é iniciado. Para atualizar: `pnpm build:pm2` e `pm2 restart ecosystem.config.cjs --update-env`. Para parar: `pm2 stop watchful-api watchful-web`. Não usar este perfil como implantação pública. Node 22 continua sendo a versão suportada.
+O web escuta em `http://localhost:3005` e a API em `http://localhost:4005`. PM2 inicia também o worker. O arquivo de ambiente define as permissões operacionais de coleta, avaliação e publicação. O Next.js recebe `NEXT_PUBLIC_API_URL` no build PM2. Web e API escutam apenas em loopback e o Swagger fica desativado nesse perfil.
+
+Para atualizar, use `pnpm build:pm2` e `pm2 restart ecosystem.config.cjs --update-env`. Para parar os processos, use `pm2 stop watchful-api watchful-web watchful-worker`.
+
+## Testes de meteorologia
+
+Execute `pnpm --filter @watchful/worker test` para testes unitários. Para exercitar a migração e a ingestão contra PostgreSQL/PostGIS isolado no PowerShell:
+
+```powershell
+docker compose -p watchful-test -f compose.test.yaml up -d --wait
+$env:WATCHFUL_TEST_DATABASE_URL = 'postgresql://watchful_test:watchful_test_local@127.0.0.1:45432/watchful_test'
+pnpm test:weather:integration
+docker compose -p watchful-test -f compose.test.yaml down
+```
+
+O banco de teste usa armazenamento temporário e o teste substitui os fornecedores por respostas sintéticas.

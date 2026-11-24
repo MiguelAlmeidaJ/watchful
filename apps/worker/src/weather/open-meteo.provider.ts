@@ -16,11 +16,17 @@ export class OpenMeteoProvider implements ForecastProvider {
   for(const field of fields)if(!Array.isArray(hourly[field])||(hourly[field] as unknown[]).length!==time.length)throw new Error('INVALID_FORECAST_SERIES');
   const at=(field:string,i:number,min:number,max:number)=>numeric((hourly[field] as unknown[])[i],min,max);
   const output:ForecastPoint[]=[];
+  const now = Date.now();
+  let previousTime = '';
   for(let i=0;i<time.length;i++){
-   const validAt=utcHour(time[i]);if(!validAt)throw new Error('INVALID_FORECAST_TIME');
+   const validAt = utcHour(time[i]);
+   if (!validAt || validAt.slice(14, 16) !== '00' || validAt <= previousTime) throw new Error('INVALID_FORECAST_TIME');
+   previousTime = validAt;
    output.push({validAt,precipitationMm:at('precipitation',i,0,500),probabilityPct:at('precipitation_probability',i,0,100),temperatureC:at('temperature_2m',i,-90,65),humidityPct:at('relative_humidity_2m',i,0,100),windKmh:at('wind_speed_10m',i,0,540),gustKmh:at('wind_gusts_10m',i,0,540)});
   }
-  if(!output.some(x=>x.precipitationMm!==null||x.temperatureC!==null))throw new Error('NO_FORECAST_DATA');
+  if (!output.some(point => Date.parse(point.validAt) >= now && (point.precipitationMm !== null || point.temperatureC !== null))) {
+   throw new Error('NO_FORECAST_DATA');
+  }
   return output;
  }
 }

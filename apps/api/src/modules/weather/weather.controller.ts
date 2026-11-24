@@ -7,6 +7,9 @@ import { AuthGuard,requirePlatform,type AuthRequest } from '../auth/auth.guard';
 import { inmetCatalog,parseCatalogCsv } from './inmet-catalog';
 import { WeatherCache } from './weather-cache';
 const date=z.string().datetime({offset:true});
+const observationColumns = `id, observed_at, ingested_at, precipitation_mm, temperature_c, humidity_pct, wind_kmh,
+ gust_kmh, pressure_hpa, quality,
+ effective_precipitation_quality(precipitation_mm, precipitation_quality, quality) AS precipitation_quality`;
 @Controller('weather')
 @UseGuards(AuthGuard)
 export class WeatherController{
@@ -71,30 +74,37 @@ export class WeatherController{
  }
  @Get('current') async current(@Req() req:AuthRequest,@Query('stationId') stationId:string){
   const id=parse(uuid,stationId),station=await this.authorize(req,'stations',id);
-  const reading=await this.cache.get('current:'+id,async()=> (await this.db.query("SELECT id,observed_at,ingested_at,precipitation_mm,temperature_c,humidity_pct,wind_kmh,gust_kmh,pressure_hpa,quality FROM weather_readings WHERE station_id=$1 AND observed_at<=now() AND quality<>'missing' ORDER BY observed_at DESC LIMIT 1",[id])).rows[0]??null);
+  const reading=await this.cache.get('current:v2:'+id,async()=> (await this.db.query(`SELECT ${observationColumns} FROM weather_readings
+   WHERE station_id=$1 AND observed_at<=now() AND quality<>'missing' ORDER BY observed_at DESC LIMIT 1`,[id])).rows[0]??null);
   const ageMinutes=reading?Math.max(0,(Date.now()-new Date(reading.observed_at).getTime())/60000):null;
-  const status=!station.enabled?'disabled':ageMinutes===null?'unknown':ageMinutes>180?'stale':station.consecutive_failures>0?'degraded':'available';
+  const status=!station.enabled?'disabled':ageMinutes===null?'unknown':ageMinutes>180?'stale':station.consecutive_failures>0||reading?.quality==='suspect'?'degraded':'available';
   return {stationId:id,kind:'observation',status,ageMinutes,reading,sourceStatus:station};
  }
  @Get('history') async history(@Req() req:AuthRequest,@Query() query:unknown){
   const q=parse(z.object({stationId:uuid,from:date,to:date,limit:z.coerce.number().int().min(1).max(1000).default(500)}),query);
   const duration=Date.parse(q.to)-Date.parse(q.from);if(duration<=0||duration>31*86400000)throw new ForbiddenException('Intervalo deve ser de até 31 dias');
   await this.authorize(req,'stations',q.stationId);
-  const rows=(await this.db.query('SELECT id,observed_at,ingested_at,precipitation_mm,temperature_c,humidity_pct,wind_kmh,gust_kmh,pressure_hpa,quality FROM weather_readings WHERE station_id=$1 AND observed_at >= $2 AND observed_at < $3 ORDER BY observed_at LIMIT $4',[q.stationId,q.from,q.to,q.limit+1])).rows;
+  const rows=(await this.db.query(`SELECT ${observationColumns} FROM weather_readings
+   WHERE station_id=$1 AND observed_at >= $2 AND observed_at < $3 ORDER BY observed_at LIMIT $4`,[q.stationId,q.from,q.to,q.limit+1])).rows;
   return {kind:'observation',data:rows.slice(0,q.limit),truncated:rows.length>q.limit};
  }
  @Get('rainfall') async rainfall(@Req() req:AuthRequest,@Query('stationId') stationId:string){
   const id=parse(uuid,stationId);await this.authorize(req,'stations',id);
-  const result=await this.db.query(`WITH bounds AS (SELECT date_trunc('hour',now(),'UTC') AS end_at),
+  const result=await this.db.query<{hours:number;end_at:Date;received_hours:number;measured_hours:number;suspect_hours:number;partial_mm:number|null}>(`WITH bounds AS (SELECT date_trunc('hour',now(),'UTC') AS end_at),
    windows AS (SELECT unnest(ARRAY[1,6,24,72]) AS hours)
    SELECT w.hours,b.end_at,COUNT(r.id)::int AS received_hours,
-   COUNT(r.precipitation_mm)::int AS measured_hours,
-   SUM(r.precipitation_mm)::float8 AS partial_mm
-   FROM windows w CROSS JOIN bounds b LEFT JOIN weather_readings r
+   (COUNT(*) FILTER (WHERE r.precipitation_quality='valid'))::int AS measured_hours,
+   (COUNT(*) FILTER (WHERE r.precipitation_quality='suspect'))::int AS suspect_hours,
+   (SUM(r.precipitation_mm) FILTER (WHERE r.precipitation_quality='valid'))::float8 AS partial_mm
+   FROM windows w CROSS JOIN bounds b LEFT JOIN hourly_precipitation r
    ON r.station_id=$1 AND r.observed_at>b.end_at-make_interval(hours=>w.hours) AND r.observed_at<=b.end_at
-   AND r.interval_minutes=60 AND r.quality IN ('valid','suspect') AND r.observed_at=date_trunc('hour',r.observed_at,'UTC')
    GROUP BY w.hours,b.end_at ORDER BY w.hours`,[id]);
-  return {stationId:id,kind:'observation',windows:result.rows.map(r=>({hours:r.hours,endAt:r.end_at,receivedHours:r.received_hours,measuredHours:r.measured_hours,coverage:r.measured_hours/r.hours,complete:r.measured_hours===r.hours,totalMm:r.measured_hours===r.hours?r.partial_mm:null,partialMm:r.partial_mm}))};
+  return {stationId:id,kind:'observation',windows:result.rows.map(row => ({
+   hours: row.hours, endAt: row.end_at, receivedHours: row.received_hours, measuredHours: row.measured_hours,
+   suspectHours: row.suspect_hours, missingHours: row.hours - row.measured_hours - row.suspect_hours,
+   coverage: row.measured_hours / row.hours, complete: row.measured_hours === row.hours,
+   totalMm: row.measured_hours === row.hours ? row.partial_mm : null, partialMm: row.partial_mm
+  }))};
  }
  @Get('forecast-locations') async locations(@Req() req:AuthRequest,@Query('municipalityId') raw?:string){
   const id=raw?parse(uuid,raw):null;

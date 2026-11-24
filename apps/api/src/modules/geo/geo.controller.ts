@@ -5,8 +5,8 @@ import { audit } from '../../common/audit';
 import { AuthGuard,requirePlatform,type AuthRequest } from '../auth/auth.guard';
 import { fetchIbgeBoundary } from './ibge-boundary';
 import { GeoService } from './geo.service';
-import { areaGeometry,hydroGeometry,position,riskImport,source,featureId,hazard,bbox,pointQuery } from './geo.schemas';
-const layer=z.enum(['municipalities','risk-areas','stations','forecast-locations','shelters','incidents','rivers']);
+import { areaGeometry,hydroGeometry,position,riskImport,historicalSectorImport,source,featureId,hazard,bbox,pointQuery } from './geo.schemas';
+const layer=z.enum(['municipalities','risk-areas','historical-risk-sectors','stations','forecast-locations','shelters','incidents','rivers']);
 const point=(coordinates:[number,number])=>({type:'Point',coordinates});
 const name=z.string().trim().min(1).max(150);
 @Controller('geo')
@@ -31,6 +31,10 @@ export class GeoController{
  @Post('risk-areas/import') importRisk(@Req() req:AuthRequest,@Body() body:unknown){
   requirePlatform(req.actor);return this.geo.importRisk(req.actor,parse(riskImport,body));
  }
+ @Post('historical-risk-sectors/import') importHistoricalSectors(@Req() req: AuthRequest, @Body() body: unknown) {
+  requirePlatform(req.actor);
+  return this.geo.importHistoricalSectors(req.actor, parse(historicalSectorImport, body));
+ }
  @Patch('risk-areas/:id/archive') async archive(@Req() req:AuthRequest,@Param('id') raw:string){
   requirePlatform(req.actor);const id=parse(uuid,raw);
   return this.geo.db.transaction(async c=>{
@@ -48,6 +52,10 @@ export class GeoController{
   const specs={
    municipalities:{table:'municipalities',geom:'boundary',where:'t.id=$1',props:"jsonb_build_object('name',t.name,'ibgeCode',t.ibge_code,'source',t.boundary_source)"},
    'risk-areas':{table:'risk_areas',geom:'boundary',where:'t.municipality_id=$1 AND t.active',props:"jsonb_build_object('name',t.name,'hazard',t.hazard,'classification',t.classification,'source',t.source)"},
+   'historical-risk-sectors':{table:'historical_risk_sectors',geom:'boundary',where:'t.municipality_id=$1',props:`jsonb_build_object(
+    'name',t.name,'externalId',t.external_id,'source',t.source,'sourceUrl',t.source_url,'sourceVersion',t.source_version,
+    'sourceHazard',t.source_hazard,'sourceClassification',t.source_classification,'surveyDate',t.survey_date,
+    'importedAt',t.imported_at,'historical',true)`},
    stations:{table:'stations',geom:'location',where:'t.municipality_id=$1',props:"jsonb_build_object('name',t.name,'provider',t.provider,'enabled',t.enabled,'lastSuccessAt',t.last_success_at)"},
    'forecast-locations':{table:'forecast_locations',geom:'location',where:'t.municipality_id=$1',props:"jsonb_build_object('name',t.name,'enabled',t.enabled)"},
    shelters:{table:'shelters',geom:'location',where:'t.municipality_id=$1',props:"jsonb_build_object('name',t.name,'status',t.status,'verifiedAt',t.verified_at,'source',t.source)"},

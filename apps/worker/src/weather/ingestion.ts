@@ -21,11 +21,30 @@ export class Ingestion {
     const adapter=observations.get(provider);if(!adapter)throw new Error('UNSUPPORTED_PROVIDER');
     const rows=await adapter.collect(target as StationTarget,now);
     await this.persist(c,async()=>{
-     for(const row of rows)await c.query(`INSERT INTO weather_readings(station_id,observed_at,precipitation_mm,temperature_c,humidity_pct,wind_kmh,gust_kmh,pressure_hpa,quality,source_payload)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-      ON CONFLICT(station_id,observed_at) DO UPDATE SET precipitation_mm=excluded.precipitation_mm,temperature_c=excluded.temperature_c,humidity_pct=excluded.humidity_pct,wind_kmh=excluded.wind_kmh,gust_kmh=excluded.gust_kmh,pressure_hpa=excluded.pressure_hpa,quality=excluded.quality,source_payload=excluded.source_payload,ingested_at=now()
-      WHERE weather_readings.quality='missing' OR excluded.quality='valid' OR (weather_readings.quality='suspect' AND excluded.quality='suspect')`,[id,row.observedAt,row.precipitationMm,row.temperatureC,row.humidityPct,row.windKmh,row.gustKmh,row.pressureHpa,row.quality,JSON.stringify(row.raw)]);
-     await this.finish(c,table,id,runId!,rows.length);
+     for (const row of rows) await c.query(`INSERT INTO weather_readings
+      (station_id, observed_at, precipitation_mm, temperature_c, humidity_pct, wind_kmh, gust_kmh, pressure_hpa, quality, precipitation_quality, source_payload)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      ON CONFLICT (station_id, observed_at) DO UPDATE SET
+        precipitation_mm = excluded.precipitation_mm, temperature_c = excluded.temperature_c,
+        humidity_pct = excluded.humidity_pct, wind_kmh = excluded.wind_kmh, gust_kmh = excluded.gust_kmh,
+        pressure_hpa = excluded.pressure_hpa, quality = excluded.quality,
+        precipitation_quality = excluded.precipitation_quality, source_payload = excluded.source_payload, ingested_at = now()
+      WHERE (weather_readings.quality = 'missing' OR excluded.quality = 'valid'
+             OR (weather_readings.quality = 'suspect' AND excluded.quality = 'suspect'))
+        AND NOT (
+          effective_precipitation_quality(weather_readings.precipitation_mm, weather_readings.precipitation_quality,
+             weather_readings.quality) = 'valid'
+          AND excluded.precipitation_quality <> 'valid'
+        )
+        AND (weather_readings.precipitation_mm, weather_readings.temperature_c, weather_readings.humidity_pct,
+             weather_readings.wind_kmh, weather_readings.gust_kmh, weather_readings.pressure_hpa,
+             weather_readings.quality, weather_readings.precipitation_quality, weather_readings.source_payload)
+          IS DISTINCT FROM (excluded.precipitation_mm, excluded.temperature_c, excluded.humidity_pct,
+             excluded.wind_kmh, excluded.gust_kmh, excluded.pressure_hpa, excluded.quality,
+             excluded.precipitation_quality, excluded.source_payload)`, [id, row.observedAt, row.precipitationMm,
+       row.temperatureC, row.humidityPct, row.windKmh, row.gustKmh, row.pressureHpa, row.quality,
+       row.precipitationQuality, JSON.stringify(row.raw)]);
+     await this.finish(c,table,id,runId!,rows.filter(row => row.quality !== 'missing').length);
     });
    }else{
     const adapter=forecasts.get(provider);if(!adapter)throw new Error('UNSUPPORTED_PROVIDER');
