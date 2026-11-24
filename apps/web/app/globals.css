@@ -1,2 +1,11 @@
 @import "tailwindcss";
-body { background: #f4f7fa; color: #142638; }
+:root{color-scheme:light;--ink:#172b39;--teal:#0f766e}
+body{background:#f3f6f8;color:var(--ink);font-family:Arial,Helvetica,sans-serif}
+button,select,input,textarea{font:inherit}
+button:not(:disabled){cursor:pointer}
+button:disabled{opacity:.45}
+:focus-visible{outline:3px solid #0d9488;outline-offset:3px}
+.panel{background:white;border:1px solid #dce5ea;border-radius:14px;padding:20px}
+.field{display:block;width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:10px;background:white;color:#172b39}
+.btn{background:#0f766e;color:white;border-radius:8px;padding:10px 15px;font-weight:600}
+.btn-secondary{border:1px solid #cbd5e1;background:white;border-radius:8px;padding:9px 13px}

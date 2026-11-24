@@ -6,15 +6,18 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 export type TerritoryLayers=Partial<Record<'municipalities'|'risk-areas'|'stations'|'forecast-locations'|'shelters'|'incidents'|'rivers',FeatureCollection>>;
 const empty:FeatureCollection={type:'FeatureCollection',features:[]};
 const keys=['municipalities','risk-areas','stations','forecast-locations','shelters','incidents','rivers'] as const;
-export function TerritoryMap({layers,center,styleUrl}:{layers:TerritoryLayers;center:[number,number];styleUrl?:string}){
+export function TerritoryMap({layers,center,styleUrl,onBounds}:{layers:TerritoryLayers;center:[number,number];styleUrl?:string;onBounds?:(bounds:number[])=>void}){
  const container=useRef<HTMLDivElement>(null),map=useRef<maplibregl.Map|null>(null),latest=useRef(layers);
- useEffect(()=>{latest.current=layers;const m=map.current;if(m?.isStyleLoaded())for(const k of keys)(m.getSource(k) as maplibregl.GeoJSONSource|undefined)?.setData(layers[k]??empty);},[layers]);
+ useEffect(()=>{latest.current=layers;const m=map.current;if(m)for(const k of keys)(m.getSource(k) as maplibregl.GeoJSONSource|undefined)?.setData(layers[k]??empty);},[layers]);
  const [longitude,latitude]=center;
  useEffect(()=>{
   if(!container.current)return;
   const m=new maplibregl.Map({container:container.current,style:styleUrl??{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9eef2'}}]},center:[longitude,latitude],zoom:11});
   map.current=m;m.addControl(new maplibregl.NavigationControl(),'top-right');
+  const report=()=>{const b=m.getBounds();onBounds?.([Math.max(-180,b.getWest()),Math.max(-90,b.getSouth()),Math.min(180,b.getEast()),Math.min(90,b.getNorth())]);};
+  m.on('moveend',report);
   m.on('load',()=>{
+   report();
    for(const k of keys)m.addSource(k,{type:'geojson',data:latest.current[k]??empty});
    m.addLayer({id:'municipality-outline',type:'line',source:'municipalities',paint:{'line-color':'#334155','line-width':2}});
    m.addLayer({id:'risk-fill',type:'fill',source:'risk-areas',paint:{'fill-color':['match',['get','classification'],'low','#65a30d','medium','#eab308','high','#f97316','very_high','#dc2626','#64748b'],'fill-opacity':0.35}});

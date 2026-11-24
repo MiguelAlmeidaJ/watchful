@@ -12,6 +12,11 @@ const name=z.string().trim().min(1).max(150);
 @UseGuards(AuthGuard)
 export class GeoController{
  constructor(@Inject(GeoService) private readonly geo:GeoService){}
+ @Get('municipalities/:id/extent') async extent(@Req() req:AuthRequest,@Param('id') raw:string){
+  const id=parse(uuid,raw);await this.geo.scope(req.actor,id);
+  const row=(await this.geo.db.query("SELECT CASE WHEN boundary IS NULL THEN NULL ELSE ARRAY[ST_XMin(boundary),ST_YMin(boundary),ST_XMax(boundary),ST_YMax(boundary)] END AS bbox, CASE WHEN boundary IS NULL THEN NULL ELSE ARRAY[ST_X(ST_PointOnSurface(boundary)),ST_Y(ST_PointOnSurface(boundary))] END AS center FROM municipalities WHERE id=$1",[id])).rows[0];
+  return row??{bbox:null,center:null};
+ }
  @Put('municipalities/:id/boundary') async boundary(@Req() req:AuthRequest,@Param('id') id:string,@Body() body:unknown){
   requirePlatform(req.actor);const v=parse(z.object({geometry:areaGeometry,source,version:featureId}).strict(),body);
   return this.geo.boundary(req.actor,parse(uuid,id),v.geometry,v.source,v.version);

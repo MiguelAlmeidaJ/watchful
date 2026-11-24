@@ -42,6 +42,10 @@ export class OrganizationsController {
    await audit(c,req.actor.id,'membership.upsert',input.userId,org,{role:input.role});return {success:true};
   });
  }
+ @Get(':id/municipalities') async municipalities(@Req() req:AuthRequest,@Param('id') id:string){
+  const org=parse(uuid,id);
+  return (await this.db.query('SELECT m.id,m.name,m.state,m.ibge_code FROM organization_municipalities om JOIN municipalities m ON m.id=om.municipality_id WHERE om.organization_id=$1 AND ($2::boolean OR EXISTS(SELECT 1 FROM memberships WHERE organization_id=$1 AND user_id=$3)) ORDER BY m.name,m.id LIMIT 500',[org,req.actor.platformAdmin,req.actor.id])).rows;
+ }
  @Post(':id/municipalities') async assign(@Req() req:AuthRequest,@Param('id') id:string,@Body() body:unknown){
   requirePlatform(req.actor);const org=parse(uuid,id);const {municipalityId}=parse(z.object({municipalityId:uuid}).strict(),body);
   return this.db.transaction(async c=>{

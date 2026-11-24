@@ -12,7 +12,11 @@
     "react": "19.0.0",
     "react-native": "0.79.6",
     "lucide-react-native": "^0.468.0",
-    "react-native-svg": "15.11.2"
+    "react-native-svg": "15.11.2",
+    "@watchful/api-client": "workspace:*",
+    "react-native-safe-area-context": "5.4.0",
+    "@maplibre/maplibre-react-native": "^10.0.0",
+    "expo-dev-client": "~5.2.0"
   },
   "devDependencies": {
     "typescript": "~5.8.3",
