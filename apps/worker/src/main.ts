@@ -13,6 +13,7 @@ async function bootstrap(){
  const queue=new Queue('weather.ingestion',{connection});
  const ingestion=new Ingestion(pool);
  const worker=new Worker('weather.ingestion',async job=>{
+  if(process.env.WEATHER_INGESTION_ENABLED!=='true')return;
   if(job.name==='schedule-observations'||job.name==='schedule-forecasts'){
    const kind:TargetKind=job.name==='schedule-observations'?'station':'forecast_location';
    const table=kind==='station'?'stations':'forecast_locations';
@@ -30,6 +31,8 @@ async function bootstrap(){
  if(process.env.WEATHER_INGESTION_ENABLED==='true'){
   await queue.upsertJobScheduler('observations-v1',{every:900000},{name:'schedule-observations',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
   await queue.upsertJobScheduler('forecasts-v1',{every:3600000},{name:'schedule-forecasts',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
+  // First collection is queued on startup, using the same deduplication bucket.
+  for(const kind of ['station','forecast_location'] as const){const table=kind==='station'?'stations':'forecast_locations';const targets=(await pool.query('SELECT id FROM '+table+" WHERE enabled"+(kind==='station'?" AND lower(provider)='inmet'":""))).rows;const bucket=Math.floor(Date.now()/(kind==='station'?900000:3600000));for(const t of targets)await queue.add('collect',{kind,id:t.id},{jobId:kind+'-'+t.id+'-'+bucket,attempts:3,backoff:{type:'exponential',delay:30000},removeOnComplete:{age:172800,count:10000},removeOnFail:{age:604800,count:10000}});}
  }else{
   await queue.removeJobScheduler('observations-v1');await queue.removeJobScheduler('forecasts-v1');
  }

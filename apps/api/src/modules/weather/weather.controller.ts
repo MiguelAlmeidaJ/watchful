@@ -1,9 +1,10 @@
-import { Body,Controller,Get,Post,Query,Param,Req,UseGuards,Inject,NotFoundException,ForbiddenException } from '@nestjs/common';
+import { Body,Controller,Get,Post,Query,Param,Req,UseGuards,Inject,NotFoundException,ForbiddenException,ConflictException } from '@nestjs/common';
 import { z } from 'zod';
 import { Database } from '../../common/database';
 import { audit } from '../../common/audit';
 import { parse,uuid } from '../../common/validation';
 import { AuthGuard,requirePlatform,type AuthRequest } from '../auth/auth.guard';
+import { inmetCatalog } from './inmet-catalog';
 import { WeatherCache } from './weather-cache';
 const date=z.string().datetime({offset:true});
 @Controller('weather')
@@ -13,6 +14,35 @@ export class WeatherController{
  private async authorize(req:AuthRequest,kind:'stations'|'forecast_locations',id:string){
   const row=(await this.db.query('SELECT t.id,t.enabled,t.last_success_at,t.last_attempt_at,t.last_error_at,t.consecutive_failures FROM '+kind+' t WHERE t.id=$1 AND ($2::boolean OR EXISTS (SELECT 1 FROM organization_municipalities om JOIN memberships m ON m.organization_id=om.organization_id WHERE om.municipality_id=t.municipality_id AND m.user_id=$3))',[id,req.actor.platformAdmin,req.actor.id])).rows[0];
   if(!row)throw new NotFoundException();return row;
+ }
+ @Get('inmet/discover') async discover(@Req() req:AuthRequest,@Query() query:unknown){
+  requirePlatform(req.actor);const q=parse(z.object({municipalityId:uuid,radiusKm:z.coerce.number().min(1).max(150).default(100)}),query);
+  const catalog=await inmetCatalog();
+  const m=(await this.db.query('SELECT boundary IS NOT NULL AS known FROM municipalities WHERE id=$1',[q.municipalityId])).rows[0];if(!m?.known)throw new ConflictException('Importe a malha municipal');
+  const rows=(await this.db.query(`WITH candidates AS (SELECT x.*,ST_SetSRID(ST_MakePoint(x.lon,x.lat),4326) AS geom FROM jsonb_to_recordset($2::jsonb) AS x(code text,name text,lat float8,lon float8,state text,status text))
+   SELECT c.code,c.name,c.lat,c.lon,c.state,c.status,ST_Covers(m.boundary,c.geom) AS inside,ST_Distance(m.boundary::geography,c.geom::geography)/1000 AS distance_km,s.id AS registered_id,s.municipality_id AS registered_municipality_id
+   FROM candidates c CROSS JOIN municipalities m LEFT JOIN stations s ON s.provider='inmet' AND s.external_id=c.code
+   WHERE m.id=$1 AND ST_DWithin(m.boundary::geography,c.geom::geography,$3) ORDER BY distance_km,c.code LIMIT 50`,[q.municipalityId,JSON.stringify(catalog.map(c=>({code:c.CD_ESTACAO.toUpperCase(),name:c.DC_NOME,lat:c.VL_LATITUDE,lon:c.VL_LONGITUDE,state:c.SG_ESTADO??null,status:c.CD_SITUACAO??null}))),q.radiusKm*1000])).rows;
+  return {data:rows,representativeness:'not_assessed'};
+ }
+ @Post('inmet/register') async register(@Req() req:AuthRequest,@Body() body:unknown){
+  requirePlatform(req.actor);const v=parse(z.object({municipalityId:uuid,code:z.string().regex(/^[A-Z0-9]{2,12}$/i)}).strict(),body);
+  const candidate=(await inmetCatalog()).find(c=>c.CD_ESTACAO.toUpperCase()===v.code.toUpperCase());if(!candidate)throw new NotFoundException('Estação não encontrada no catálogo');
+  return this.db.transaction(async c=>{
+   const m=(await c.query('SELECT ST_Covers(boundary,ST_SetSRID(ST_MakePoint($2,$3),4326)) AS inside FROM municipalities WHERE id=$1 FOR SHARE',[v.municipalityId,candidate.VL_LONGITUDE,candidate.VL_LATITUDE])).rows[0];
+   if(!m?.inside)throw new ConflictException('Estação externa ao município: consulte como referência regional, sem atribuir medições ao território');
+   const row=(await c.query("INSERT INTO stations(municipality_id,provider,external_id,name,location) VALUES($1,'inmet',$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)) ON CONFLICT(provider,external_id) DO NOTHING RETURNING id",[v.municipalityId,candidate.CD_ESTACAO.toUpperCase(),candidate.DC_NOME,candidate.VL_LONGITUDE,candidate.VL_LATITUDE])).rows[0];
+   if(!row)throw new ConflictException('Estação já cadastrada');await audit(c,req.actor.id,'station.inmet.register',row.id);return row;
+  });
+ }
+ @Post('forecast-locations/municipal-center') async center(@Req() req:AuthRequest,@Body() body:unknown){
+  requirePlatform(req.actor);const {municipalityId}=parse(z.object({municipalityId:uuid}).strict(),body);
+  return this.db.transaction(async c=>{
+   const m=(await c.query('SELECT id,name,boundary IS NOT NULL AS known FROM municipalities WHERE id=$1 FOR UPDATE',[municipalityId])).rows[0];if(!m?.known)throw new ConflictException('Importe a malha municipal');
+   const existing=(await c.query("SELECT id,name FROM forecast_locations WHERE municipality_id=$1 AND name='Referência municipal (IBGE)' ORDER BY id LIMIT 1",[municipalityId])).rows[0];if(existing)return existing;
+   const row=(await c.query("INSERT INTO forecast_locations(municipality_id,name,location) SELECT id,'Referência municipal (IBGE)',ST_PointOnSurface(boundary) FROM municipalities WHERE id=$1 RETURNING id,name",[municipalityId])).rows[0]!;
+   await audit(c,req.actor.id,'forecast_location.center',row.id);return row;
+  });
  }
  @Get('current') async current(@Req() req:AuthRequest,@Query('stationId') stationId:string){
   const id=parse(uuid,stationId),station=await this.authorize(req,'stations',id);
@@ -41,8 +71,9 @@ export class WeatherController{
    GROUP BY w.hours,b.end_at ORDER BY w.hours`,[id]);
   return {stationId:id,kind:'observation',windows:result.rows.map(r=>({hours:r.hours,endAt:r.end_at,receivedHours:r.received_hours,measuredHours:r.measured_hours,coverage:r.measured_hours/r.hours,complete:r.measured_hours===r.hours,totalMm:r.measured_hours===r.hours?r.partial_mm:null,partialMm:r.partial_mm}))};
  }
- @Get('forecast-locations') async locations(@Req() req:AuthRequest){
-  return (await this.db.query('SELECT t.id,t.name,t.municipality_id,ST_Y(t.location) AS latitude,ST_X(t.location) AS longitude,t.enabled FROM forecast_locations t WHERE $1::boolean OR EXISTS (SELECT 1 FROM organization_municipalities om JOIN memberships m ON m.organization_id=om.organization_id WHERE om.municipality_id=t.municipality_id AND m.user_id=$2) ORDER BY t.name LIMIT 500',[req.actor.platformAdmin,req.actor.id])).rows;
+ @Get('forecast-locations') async locations(@Req() req:AuthRequest,@Query('municipalityId') raw?:string){
+  const id=raw?parse(uuid,raw):null;
+  return (await this.db.query('SELECT t.id,t.name,t.municipality_id,ST_Y(t.location) AS latitude,ST_X(t.location) AS longitude,t.enabled FROM forecast_locations t WHERE ($3::uuid IS NULL OR t.municipality_id=$3) AND ($1::boolean OR EXISTS (SELECT 1 FROM organization_municipalities om JOIN memberships m ON m.organization_id=om.organization_id WHERE om.municipality_id=t.municipality_id AND m.user_id=$2)) ORDER BY t.name LIMIT 500',[req.actor.platformAdmin,req.actor.id,id])).rows;
  }
  @Post('forecast-locations') async createLocation(@Req() req:AuthRequest,@Body() body:unknown){
   requirePlatform(req.actor);const v=parse(z.object({municipalityId:uuid,name:z.string().trim().min(1).max(150),latitude:z.number().min(-90).max(90),longitude:z.number().min(-180).max(180)}).strict(),body);
