@@ -16,3 +16,7 @@ export type GeoLayer='municipalities'|'risk-areas'|'stations'|'forecast-location
 export type IncidentStatus='reported'|'verified'|'resolved'|'dismissed';
 export type ShelterStatus='unverified'|'available'|'unavailable'|'full';
 export interface NearbyRiskArea { id:string; name:string; hazard:Hazard; classification:TerritorialClassification; source:string; inside:boolean; distance_meters:number; }
+
+export type AlertStatus='draft'|'approved'|'published'|'cancelled'|'expired';
+export type AlertSeverity='attention'|'warning'|'severe';
+export interface AlertSummary { id:string; origin:AlertOrigin; severity:AlertSeverity; status:AlertStatus; title:string; message:string; source:string; starts_at:string; expires_at:string; }

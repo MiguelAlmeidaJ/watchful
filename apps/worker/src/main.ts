@@ -2,6 +2,7 @@ import { config } from 'dotenv';
 import { resolve } from 'node:path';
 import { Queue,Worker } from 'bullmq';
 import { Pool } from 'pg';
+import { AlertProcessor } from './alerts/processor';
 import { Ingestion, type TargetKind } from './weather/ingestion';
 config({path:resolve(__dirname,'../../../.env')});
 async function bootstrap(){
@@ -32,9 +33,28 @@ async function bootstrap(){
  }else{
   await queue.removeJobScheduler('observations-v1');await queue.removeJobScheduler('forecasts-v1');
  }
- console.log('Watchful weather worker ready');
+ const alertQueue=new Queue('alerts.processing',{connection});
+ const processor=new AlertProcessor(pool);
+ const alertWorker=new Worker('alerts.processing',async job=>{
+  if(job.name==='maintenance'){await processor.expire();await processor.deliver();return;}
+  if(process.env.RISK_EVALUATION_ENABLED!=='true')return;
+  if(job.name==='schedule-risk'){
+   const rules=(await pool.query('SELECT id FROM risk_rules WHERE active')).rows;
+   const bucket=Math.floor(Date.now()/900000);
+   for(const rule of rules)await alertQueue.add('assess',{id:rule.id},{jobId:'risk-'+rule.id+'-'+bucket,attempts:3,backoff:{type:'exponential',delay:30000},removeOnComplete:{age:86400,count:10000},removeOnFail:{age:604800,count:10000}});
+   return;
+  }
+  if(job.name==='assess'&&typeof job.data.id==='string')await processor.assess(job.data.id);
+ },{connection,concurrency:2});
+ alertWorker.on('error',()=>console.error('alert.worker.error'));
+ alertWorker.on('failed',(job)=>console.error(JSON.stringify({event:'alert.job.failed',id:job?.id})));
+ await alertQueue.waitUntilReady();await alertWorker.waitUntilReady();
+ await alertQueue.upsertJobScheduler('alert-maintenance-v1',{every:60000},{name:'maintenance',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
+ if(process.env.RISK_EVALUATION_ENABLED==='true')await alertQueue.upsertJobScheduler('risk-v1',{every:900000},{name:'schedule-risk',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
+ else await alertQueue.removeJobScheduler('risk-v1');
+ console.log('Watchful weather and alert workers ready');
  let closing=false;
- const shutdown=async()=>{if(closing)return;closing=true;await worker.close();await queue.close();await pool.end();};
+ const shutdown=async()=>{if(closing)return;closing=true;await Promise.all([worker.close(),alertWorker.close()]);await Promise.all([queue.close(),alertQueue.close()]);await pool.end();};
  process.once('SIGINT',()=>void shutdown());process.once('SIGTERM',()=>void shutdown());
 }
 bootstrap().catch(error=>{console.error(error instanceof Error?error.name:'Startup failed');process.exit(1);});

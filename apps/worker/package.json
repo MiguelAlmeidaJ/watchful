@@ -6,7 +6,8 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/alerts/risk-engine.test.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
