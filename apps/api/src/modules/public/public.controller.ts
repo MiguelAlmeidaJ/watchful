@@ -3,6 +3,7 @@ import {z} from 'zod';
 import {Database} from '../../common/database';
 import {parse} from '../../common/validation';
 import {getWarnings} from './inmet-warnings';
+import {getPublicRiver} from './public-river';
 const code=z.string().regex(/^\d{7}$/);
 const registered="EXISTS (SELECT 1 FROM organization_municipalities om WHERE om.municipality_id=m.id)";
 @Controller('public')
@@ -41,23 +42,7 @@ export class PublicController {
    CASE WHEN count(w.precipitation_probability_pct)=24 THEN max(w.precipitation_probability_pct)::float8 END AS rain_probability_pct
    FROM days d LEFT JOIN weather_forecasts w ON w.location_id=$1 AND w.provider='open-meteo' AND w.fetched_at=$2 AND (w.valid_at AT TIME ZONE 'America/Sao_Paulo')::date=d.day GROUP BY d.day ORDER BY d.day`,[forecast.id,forecast.fetched_at])).rows:[];
   const observation=(await this.db.query(`SELECT s.name,r.observed_at,r.temperature_c::float8,r.humidity_pct::float8,r.wind_kmh::float8,CASE WHEN effective_precipitation_quality(r.precipitation_mm,r.precipitation_quality,r.quality)='valid' THEN r.precipitation_mm::float8 END AS precipitation_mm FROM stations s JOIN municipalities m ON m.id=s.municipality_id JOIN LATERAL(SELECT * FROM weather_readings WHERE station_id=s.id AND observed_at BETWEEN now()-interval '3 hours' AND now() AND quality='valid' ORDER BY observed_at DESC LIMIT 1) r ON true WHERE s.municipality_id=$1 AND s.enabled AND s.provider='inmet' AND s.consecutive_failures=0 AND ST_Covers(m.boundary,s.location) ORDER BY r.observed_at DESC,s.id LIMIT 1`,[m.id])).rows[0]??null;
-  // Only the explicitly known pilot composition is associated with the main river.
-  // Never assume an arbitrary composition is representative of another municipality.
-  const flow=(await this.db.query(`WITH composition AS (SELECT c.id,c.name,c.station_codes,c.margin_m3_s FROM hydro_compositions c WHERE c.municipality_id=$1 AND c.archived_at IS NULL AND c.id=(SELECT public_flow_composition_id FROM municipalities WHERE id=$1)),
-   readings AS (SELECT c.id,c.name,c.margin_m3_s,cardinality(c.station_codes) AS expected,t.id AS target_id,t.enabled,t.last_error,v.observed_at,v.discharge_m3_s,v.discharge_quality
-   FROM composition c CROSS JOIN LATERAL unnest(c.station_codes) AS codes(code)
-   LEFT JOIN ana_targets t ON t.municipality_id=$1 AND t.station_code=codes.code AND t.archived_at IS NULL
-   LEFT JOIN LATERAL(SELECT observed_at,discharge_m3_s,discharge_quality FROM ana_telemetry WHERE target_id=t.id ORDER BY observed_at DESC LIMIT 1)v ON true)
-   SELECT name,margin_m3_s,CASE WHEN count(DISTINCT target_id)=expected AND count(*)=expected AND bool_and(coalesce(enabled,false) AND last_error IS NULL AND coalesce(discharge_quality='Dado aprovado',false) AND discharge_m3_s IS NOT NULL AND coalesce(observed_at BETWEEN now()-interval '2 hours' AND now(),false)) AND min(observed_at)=max(observed_at) THEN sum(discharge_m3_s)::float8 END AS measured_sum_m3_s,
-   CASE WHEN count(DISTINCT target_id)=expected AND count(*)=expected AND bool_and(coalesce(enabled,false) AND last_error IS NULL AND coalesce(discharge_quality='Dado aprovado',false) AND discharge_m3_s IS NOT NULL AND coalesce(observed_at BETWEEN now()-interval '2 hours' AND now(),false)) AND min(observed_at)=max(observed_at) THEN max(observed_at) END AS observed_at FROM readings GROUP BY id,name,margin_m3_s,expected`,[m.id])).rows[0]??null;
-  // Historical fallback is a complete, approved common timestamp, never a sum of mixed hours.
-  const lastComplete=flow&&flow.measured_sum_m3_s===null?(await this.db.query(`SELECT a.observed_at,(sum(a.discharge_m3_s)+c.margin_m3_s)::float8 AS estimated_m3_s,bool_and(t.enabled AND t.last_error IS NULL) AS healthy
-   FROM municipalities m JOIN hydro_compositions c ON c.id=m.public_flow_composition_id AND c.municipality_id=m.id AND c.archived_at IS NULL
-   JOIN ana_targets t ON t.municipality_id=m.id AND t.station_code=ANY(c.station_codes) AND t.archived_at IS NULL
-   JOIN ana_telemetry a ON a.target_id=t.id
-   WHERE m.id=$1 AND a.discharge_quality='Dado aprovado' AND a.discharge_m3_s IS NOT NULL AND a.observed_at BETWEEN now()-interval '7 days' AND now()
-   GROUP BY c.id,c.margin_m3_s,c.station_codes,a.observed_at HAVING count(DISTINCT t.station_code)=cardinality(c.station_codes)
-   ORDER BY a.observed_at DESC LIMIT 1`,[m.id])).rows[0]??null:null;
-  return {municipality:{ibge_code:m.ibge_code,name:m.name,state:m.state,main_river:m.main_river,longitude:m.longitude,latitude:m.latitude},weather:{observation,forecast:forecast?{status:forecastFresh?'available':'stale',fetchedAt:forecast.fetched_at,current:forecastFresh?hours[0]??null:null,today:forecastFresh?daily[0]??null:null,daily:forecastFresh?daily.slice(1):[]}:null},river:flow?{estimatedM3s:flow.measured_sum_m3_s===null?lastComplete?.estimated_m3_s??null:flow.measured_sum_m3_s+flow.margin_m3_s,observedAt:flow.observed_at??lastComplete?.observed_at??null,status:flow.measured_sum_m3_s!==null||(lastComplete?.healthy&&Date.now()-Date.parse(String(lastComplete.observed_at))<=7200000)?'available':lastComplete?'historical':'unavailable'}:null,risk:{status:'not_assessed',message:'Risco indeterminado: não há limite de transbordamento homologado para publicação. Ausência de avaliação não significa segurança.'}};
+  const river = await getPublicRiver(this.db, m.id, ibge);
+  return {municipality:{ibge_code:m.ibge_code,name:m.name,state:m.state,main_river:m.main_river,longitude:m.longitude,latitude:m.latitude},weather:{observation,forecast:forecast?{status:forecastFresh?'available':'stale',fetchedAt:forecast.fetched_at,current:forecastFresh?hours[0]??null:null,today:forecastFresh?daily[0]??null:null,daily:forecastFresh?daily.slice(1):[]}:null},river,risk:{status:'not_assessed',message:'Risco indeterminado: não há limite de transbordamento homologado para publicação. Ausência de avaliação não significa segurança.'}};
  }
 }

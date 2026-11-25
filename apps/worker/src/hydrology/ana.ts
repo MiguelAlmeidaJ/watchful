@@ -47,10 +47,7 @@ export async function pollAna(pool:Pool){
    const active=(await c.query('SELECT id FROM ana_targets WHERE id=$1 AND enabled AND archived_at IS NULL FOR UPDATE',[target.id])).rowCount;if(!active){await c.query('ROLLBACK');return;}
    for(const row of rows)await c.query(`INSERT INTO ana_telemetry(target_id,observed_at,discharge_m3_s,discharge_quality,level_raw,level_quality) VALUES($1,$2,$3,$4,$5,$6)
    ON CONFLICT(target_id,observed_at) DO UPDATE SET discharge_m3_s=excluded.discharge_m3_s,discharge_quality=excluded.discharge_quality,level_raw=excluded.level_raw,level_quality=excluded.level_quality,fetched_at=now()`,[target.id,row.observedAt,row.discharge,row.dischargeQuality,row.level,row.levelQuality]);
-   const newest=Math.max(-Infinity,...rows.filter(r=>r.discharge!==null).map(r=>Date.parse(r.observedAt)));
-   const hour=Math.floor(Date.now()/3600000)*3600000;
-   const next=new Date(newest>=hour?hour+3600000+120000:Date.now()+300000);
-   await c.query('UPDATE ana_targets SET last_success_at=now(),last_error=NULL,records_count=$2,next_due=$3 WHERE id=$1',[target.id,rows.length,next]);await c.query('COMMIT');
+   await c.query('UPDATE ana_targets SET last_success_at=now(),last_error=NULL,records_count=$2 WHERE id=$1',[target.id,rows.length]);await c.query('COMMIT');
   }catch(e){if(stage==='DATABASE')await c.query('ROLLBACK');const detail=stage==='FETCH'&&e instanceof Error?e.message:'DATABASE_WRITE_FAILED';await c.query('UPDATE ana_targets SET last_error=$2 WHERE id=$1',[target.id,detail]);console.error(JSON.stringify({event:'ana.collection.failed',station:target.station_code,detail}));}
  }finally{try{if(locked)await c.query('SELECT pg_advisory_unlock(827351)');}finally{c.release();}}
 }

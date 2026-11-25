@@ -1,0 +1,56 @@
+.controles {
+ position: sticky;
+ top: 8px;
+ z-index: 2;
+ margin-bottom: 14px;
+ padding: 10px 12px;
+ border: 1px solid var(--public-line);
+ border-radius: 8px;
+ background: var(--public-paper);
+}
+
+.cabecalho, .extremos {
+ display: flex;
+ justify-content: space-between;
+ align-items: baseline;
+ gap: 8px;
+}
+
+.cabecalho { font-weight: 650; }
+.cabecalho output { color: var(--public-accent); font-variant-numeric: tabular-nums; }
+.extremos { color: var(--public-muted); font-size: 12px; }
+
+.barra {
+ display: block;
+ width: 100%;
+ height: 38px;
+ margin: 0;
+ accent-color: var(--public-accent);
+ cursor: ew-resize;
+}
+
+.limites {
+ display: grid;
+ grid-template-columns: repeat(3, minmax(0, 1fr));
+ gap: 6px;
+ margin-top: 8px;
+}
+
+.limites button {
+ display: grid;
+ justify-items: start;
+ min-height: 44px;
+ padding: 5px clamp(4px, 2vw, 10px);
+ border: 1px solid var(--public-line);
+ border-top: 2px solid var(--faixa);
+ border-radius: 5px;
+ background: var(--public-surface);
+ font-size: 12px;
+}
+
+.limites button:hover { background: var(--public-soft); }
+.limites button span { font-weight: 650; }
+.limites button small { color: var(--public-muted); }
+.limites button[data-faixa="attention"] { --faixa: #bb901e; }
+.limites button[data-faixa="alert"] { --faixa: #c76524; }
+.limites button[data-faixa="flood"] { --faixa: #b34242; }

@@ -30,7 +30,7 @@ module.exports = {
         NODE_ENV: 'production',
         API_HOST: '127.0.0.1',
         API_PORT: '4005',
-        WEB_ORIGIN: 'http://localhost:3005'
+        WEB_ORIGIN: process.env.WEB_ORIGIN || 'http://localhost:3005'
       }
     },
     {
@@ -50,8 +50,7 @@ module.exports = {
       time: true,
       env: {
         NODE_ENV: 'production',
-        PORT: '3005',
-        NEXT_PUBLIC_API_URL: 'http://localhost:4005/api/v1'
+        PORT: '3005'
       }
     }
   ]

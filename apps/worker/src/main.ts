@@ -92,7 +92,11 @@ async function bootstrap(){
  alertWorker.on('error',()=>console.error('alert.worker.error'));
  alertWorker.on('failed',(job)=>console.error(JSON.stringify({event:'alert.job.failed',id:job?.id})));
  await alertQueue.waitUntilReady();await alertWorker.waitUntilReady();
- if(process.env.ANA_INGESTION_ENABLED==='true')await alertQueue.upsertJobScheduler('ana-poll-v1',{every:60000},{name:'ana-poll',data:{},opts:{removeOnComplete:30,removeOnFail:30}});else await alertQueue.removeJobScheduler('ana-poll-v1');
+ if(process.env.ANA_INGESTION_ENABLED==='true'){
+  await pool.query(`UPDATE ana_targets SET next_due=last_attempt_at+interval '5 minutes'
+   WHERE enabled AND archived_at IS NULL AND next_due>last_attempt_at+interval '5 minutes'`);
+  await alertQueue.upsertJobScheduler('ana-poll-v1',{every:60000},{name:'ana-poll',data:{},opts:{removeOnComplete:30,removeOnFail:30}});
+ }else await alertQueue.removeJobScheduler('ana-poll-v1');
  await alertQueue.upsertJobScheduler('alert-maintenance-v1',{every:60000},{name:'maintenance',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
  if(process.env.RISK_EVALUATION_ENABLED==='true')await alertQueue.upsertJobScheduler('risk-v1',{every:900000},{name:'schedule-risk',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
  else await alertQueue.removeJobScheduler('risk-v1');

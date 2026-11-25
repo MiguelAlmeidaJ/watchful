@@ -1,12 +1,52 @@
 'use client';
-import {useEffect,useState} from 'react';
-import {query,formatDate,type Client} from '@watchful/api-client';
-import {Panel,State} from './ui/panel';
-import {AnaTelemetry} from './ana-telemetry';
-type Summary={municipality:{main_river:string|null;main_river_source:string|null};rivers:{count:number;named:{name:string;reaches:number}[];imported:{imported_at:string;imported:number;received:number}|null}};
-export function Hydrology({api,city,platform,revision,refresh}:{api:Client;city:string;platform:boolean;revision:number;refresh:()=>void}){
- const [data,setData]=useState<Summary|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[file,setFile]=useState<File|null>(null),[source,setSource]=useState('ANA — BHO6'),[version,setVersion]=useState(''),[river,setRiver]=useState(''),[riverSource,setRiverSource]=useState('');
- useEffect(()=>{let live=true;const load=()=>api.request<Summary>('/hydrology/summary'+query({municipalityId:city})).then(v=>{if(live){setData(v);}}).catch(e=>{if(live)setError(e.message);});void load();const timer=setInterval(()=>void load(),30000);return()=>{live=false;clearInterval(timer);};},[api,city,revision]);
- async function action(fn:()=>Promise<unknown>){setBusy(true);setError('');try{await fn();refresh();}catch(e){setError(e instanceof Error?e.message:'Falha');}finally{setBusy(false);}}
- return <div className="sources-layout"><Panel title="Rede hidrográfica municipal"><State error={error} loading={!data&&!error}/><div className="grid gap-3 sm:grid-cols-2"><div className="metric-card"><p>Rio principal</p><strong className="metric-value">{data?.municipality.main_river??'Não identificado'}</strong><p className="chart-caption">{data?.municipality.main_river_source}</p></div><div className="metric-card"><p>Trechos de drenagem cadastrados</p><strong className="metric-value">{data?.rivers.count??'—'}</strong><p className="chart-caption">Consulte a camada Rios no mapa inteligente.</p></div></div>{data?.rivers.imported&&<p className="chart-caption my-3">Última importação BHO6: {formatDate(data.rivers.imported.imported_at)} · {data.rivers.imported.imported} trechos no município.</p>}{platform&&<><div className="my-4"><button className="btn" disabled={busy} onClick={()=>void action(()=>api.request('/hydrology/rivers/bho6','POST',{municipalityId:city}))}>{busy?'Processando…':'Importar rede oficial ANA / BHO6'}</button><p className="chart-caption mt-2">Consulta espacial automática. Uma nova importação substitui somente os trechos desta fonte após validar a resposta completa.</p></div><form className="grid gap-3 mt-4" onSubmit={e=>{e.preventDefault();void action(()=>api.request('/hydrology/main-river','POST',{municipalityId:city,name:river,source:riverSource}));}}><label>Rio principal<input required className="field" value={river} onChange={e=>setRiver(e.target.value)}/></label><label>Referência da identificação<input required className="field" value={riverSource} onChange={e=>setRiverSource(e.target.value)}/></label><button className="btn" disabled={busy}>Salvar rio principal</button></form><details className="mt-5"><summary className="cursor-pointer font-semibold">Importação manual avançada (opcional)</summary><form className="grid gap-3 mt-5" onSubmit={e=>{e.preventDefault();void action(async()=>{if(!file||file.size>1000000)throw Error('Arquivo ausente ou maior que 1 MB');const features=JSON.parse(await file.text());return api.request('/hydrology/rivers/import','POST',{municipalityId:city,source,sourceVersion:version,features});});}}><h3 className="font-semibold">Importar trechos oficiais normalizados</h3><p className="chart-caption">JSON em WGS84, até 50 trechos por lote. Preserve códigos e conexões da fonte. Recorte municipal realizado pelo PostGIS.</p><label>Fonte<input required className="field" value={source} onChange={e=>setSource(e.target.value)}/></label><label>Versão da fonte<input required className="field" value={version} onChange={e=>setVersion(e.target.value)}/></label><input type="file" aria-label="Trechos de drenagem JSON" accept=".json" onChange={e=>setFile(e.target.files?.[0]??null)}/><button className="btn" disabled={busy||!file}>Importar rede hidrográfica</button><a className="underline text-sm" href="https://metadados.snirh.gov.br/" target="_blank" rel="noreferrer">Catálogo oficial de metadados ANA</a></form></details></>}{!!data?.rivers.named.length&&<div className="table-wrap"><table className="w-full text-sm text-left"><thead><tr><th className="p-3">Curso de água identificado</th><th className="p-3">Trechos</th></tr></thead><tbody>{data.rivers.named.map(n=><tr key={n.name}><td className="p-3">{n.name}</td><td className="p-3">{n.reaches}</td></tr>)}</tbody></table></div>}</Panel><AnaTelemetry {...{api,city,platform,revision,refresh}}/></div>;
+import { useEffect, useState } from 'react';
+import { query, type Client } from '@watchful/api-client';
+import { Panel, State } from './ui/panel';
+import { AnaTelemetry } from './ana-telemetry';
+
+type Summary = { municipality: { main_river: string | null; main_river_source: string | null } };
+
+export function Hydrology({ api, city, platform, revision, refresh }: {
+ api: Client; city: string; platform: boolean; revision: number; refresh: () => void;
+}) {
+ const [name, setName] = useState('');
+ const [source, setSource] = useState('');
+ const [loading, setLoading] = useState(true);
+ const [busy, setBusy] = useState(false);
+ const [error, setError] = useState('');
+
+ useEffect(() => {
+  let active = true;
+  setLoading(true);
+  setError('');
+  api.request<Summary>('/hydrology/summary'+query({municipalityId:city})).then(({ municipality }) => {
+   if (!active) return;
+   setName(municipality.main_river ?? '');
+   setSource(municipality.main_river_source ?? '');
+  }).catch(e => { if (active) setError(e instanceof Error ? e.message : 'Falha ao consultar o rio principal.'); })
+   .finally(() => { if (active) setLoading(false); });
+  return () => { active = false; };
+ }, [api, city, revision]);
+
+ return <div className="sources-layout">
+  <Panel title="Rio principal do painel público">
+   <State loading={loading} error={error}/>
+   {platform ? <form className="grid gap-3" onSubmit={async event => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+     await api.request('/hydrology/main-river','POST',{municipalityId:city,name,source});
+     refresh();
+    } catch (e) {
+     setError(e instanceof Error ? e.message : 'Falha ao salvar o rio principal.');
+    } finally { setBusy(false); }
+   }}>
+    <label>Nome do rio<input className="field" required value={name} onChange={e=>setName(e.target.value)}/></label>
+    <label>Referência da identificação<input className="field" required value={source} onChange={e=>setSource(e.target.value)}/></label>
+    <button className="btn" disabled={busy || loading}>{busy ? 'Salvando…' : 'Salvar rio principal'}</button>
+   </form> : !loading && <p>{name || 'Rio principal ainda não cadastrado.'}</p>}
+  </Panel>
+  <AnaTelemetry {...{api,city,platform,revision,refresh}}/>
+ </div>;
 }

@@ -9,9 +9,10 @@ const { GeoController } = require('../apps/api/dist/modules/geo/geo.controller')
 const { GeoService } = require('../apps/api/dist/modules/geo/geo.service');
 const { AlertProcessor } = require('../apps/worker/dist/alerts/processor');
 const { Ingestion } = require('../apps/worker/dist/weather/ingestion');
+const { getPublicRiver, classifyMunicipalFlow } = require('../apps/api/dist/modules/public/public-river');
 const { Pool } = createRequire(resolve(__dirname, '../apps/api/package.json'))('pg');
 
-test('API and risk use the same reliable precipitation, including after migration and retries', async context => {
+test('API and worker use reliable precipitation and discharge after migration', async context => {
   assert.ok(process.env.WATCHFUL_TEST_DATABASE_URL, 'Set WATCHFUL_TEST_DATABASE_URL to the isolated PostgreSQL test instance');
   const url = new URL(process.env.WATCHFUL_TEST_DATABASE_URL);
   const schema = 'weather_test_' + randomUUID().replaceAll('-', '');
@@ -96,6 +97,39 @@ test('API and risk use the same reliable precipitation, including after migratio
     assert.equal((await db.query('SELECT count(*)::int AS count FROM ingestion_runs')).rows[0].count, runs.length);
     await lock.query('SELECT pg_advisory_unlock(hashtextextended($1,0))', [key]);
   } finally { lock.release(true); }
+
+  await context.test('public flow uses three approved simultaneous readings and municipal thresholds', async () => {
+    const pilotCode = '3101508';
+    const { rows: [city] } = await db.query("INSERT INTO municipalities(ibge_code,name,state) VALUES ($1,'Pilot','MG') RETURNING id", [pilotCode]);
+    const codes = ['58385100', '58612000', '58440000'];
+    const { rows: [composition] } = await db.query(`INSERT INTO hydro_compositions(municipality_id,name,source,station_codes,margin_m3_s)
+      VALUES($1,'Pilot composition','Synthetic', $2, 100) RETURNING id`, [city.id, codes]);
+    await db.query('UPDATE municipalities SET public_flow_composition_id=$2 WHERE id=$1', [city.id, composition.id]);
+    const { rows: members } = await db.query(`INSERT INTO ana_targets(municipality_id,station_code,station_name)
+      SELECT $1,code,code FROM unnest($2::text[]) code RETURNING id,station_code`, [city.id, codes]);
+    const timestamp = (await db.query('SELECT now() AS observed_at')).rows[0].observed_at;
+    for (const [index, code] of codes.entries()) {
+      await db.query(`INSERT INTO ana_telemetry(target_id,observed_at,discharge_m3_s,discharge_quality)
+        VALUES($1,$2,$3,'Dado aprovado')`, [members.find(member => member.station_code === code).id, timestamp, [1200, 50, 50][index]]);
+    }
+    const river = await getPublicRiver(db, city.id, pilotCode);
+    assert.equal(river.estimatedM3s, 1300);
+    assert.equal(river.localStage.current.level, 'attention');
+    assert.deepEqual(river.contributions.map(reading => reading.dischargeM3s), [1200, 50, 50]);
+    assert.equal(classifyMunicipalFlow(pilotCode, 1299.99, true).current.level, 'below_attention');
+    assert.equal(classifyMunicipalFlow(pilotCode, 1900, true).current.level, 'alert');
+    assert.equal(classifyMunicipalFlow(pilotCode, 2200, true).current.level, 'flood');
+    assert.equal(classifyMunicipalFlow('3100104', 2200, true), null);
+    await db.query("UPDATE ana_telemetry SET observed_at=observed_at-interval '3 hours' WHERE target_id=ANY($1::uuid[])", [members.map(member => member.id)]);
+    const historical = await getPublicRiver(db, city.id, pilotCode);
+    assert.equal(historical.status, 'historical');
+    assert.equal(historical.localStage.current, null);
+    await db.query("UPDATE ana_telemetry SET observed_at=observed_at-interval '1 hour' WHERE target_id=$1", [members[0].id]);
+    const incomplete = await getPublicRiver(db, city.id, pilotCode);
+    assert.equal(incomplete.estimatedM3s, null);
+    assert.equal(incomplete.localStage.current, null);
+    assert.equal(incomplete.contributions.length, 3);
+  });
 
   await context.test('historical sectors require platform access and never enter the operational risk layer', async () => {
     const database = {

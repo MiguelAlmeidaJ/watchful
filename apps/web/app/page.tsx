@@ -1,5 +1,33 @@
 import Link from 'next/link';
-import {ShieldCheck,ArrowUpRight} from 'lucide-react';
+import { ArrowUpRight, CloudRain } from 'lucide-react';
+import { PublicMonitoring } from '../components/public-monitoring';
+import { PublicSkipLink } from '../components/public-navigation';
 import './public.css';
-import {PublicMonitoring} from '../components/public-monitoring';
-export default function Home(){return <div className="public-site"><a className="public-skip" href="#conteudo">Ir para o conteúdo</a><header className="public-header"><div className="public-container public-nav"><Link href="/" className="public-brand"><span className="public-brand-icon"><ShieldCheck size={25}/></span>watchful<span>.</span></Link><nav aria-label="Navegação pública"><a href="#monitoramento">Monitoramento</a><a href="#avisos">Avisos oficiais</a><a href="#orientacoes">Orientações</a></nav><Link href="/admin" className="public-button public-button-small">Área administrativa <ArrowUpRight size={17}/></Link></div></header><main id="conteudo"><PublicMonitoring/></main><footer className="public-footer"><div className="public-container public-footer-inner"><Link href="/" className="public-brand"><span className="public-brand-icon"><ShieldCheck size={23}/></span>watchful<span>.</span></Link><p>Monitoramento ambiental · INMET · ANA · Open-Meteo · IBGE</p><Link href="/admin">Acesso administrativo <ArrowUpRight size={15}/></Link></div></footer></div>;}
+
+export default function Home() {
+ return (
+  <div className="public-site">
+   <PublicSkipLink/>
+   <header className="public-header">
+    <div className="public-container public-nav">
+     <a href="#monitoramento" className="public-brand"><CloudRain size={25} aria-hidden="true"/> Vem Chuva Aí?</a>
+     <nav aria-label="Navegação pública">
+      <a href="#monitoramento">Monitoramento</a>
+      <a href="#tempo">Tempo e avisos</a>
+      <a href="#avisos">Avisos oficiais</a>
+      <a href="#orientacoes">Orientações</a>
+     </nav>
+     <Link href="/admin" className="public-admin-link">Administração <ArrowUpRight size={16} aria-hidden="true"/></Link>
+    </div>
+   </header>
+   <main id="conteudo"><PublicMonitoring/></main>
+   <footer className="public-footer">
+    <div className="public-container public-footer-inner">
+     <a href="#monitoramento" className="public-brand"><CloudRain size={22} aria-hidden="true"/> Vem Chuva Aí?</a>
+     <p>Fontes de dados · ANA, INMET, Open-Meteo e IBGE</p>
+     <Link href="/admin" className="public-admin-link">Administração <ArrowUpRight size={16} aria-hidden="true"/></Link>
+    </div>
+   </footer>
+  </div>
+ );
+}
