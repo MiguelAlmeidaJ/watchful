@@ -27,7 +27,7 @@ async function collect(code:string){
   const res=await fetch(url,{signal:AbortSignal.timeout(12000),redirect:'error'});if(!res.ok)throw Error('HTTP_'+res.status);if(!res.body)throw Error('EMPTY_BODY');
   const reader=res.body.getReader();const chunks:Uint8Array[]=[];let bytes=0;try{while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.byteLength;if(bytes>2000000){await reader.cancel();throw Error('SIZE');}chunks.push(value);}}finally{reader.releaseLock();}
   const rows=parseTelemetry(Buffer.concat(chunks).toString('utf8'),code);
-  if(latestApproved(rows)>=Date.now()-7200000)return rows;
+  if(latestApproved(rows)>=Math.floor(Date.now()/3600000)*3600000)return rows;
   if(!fallback||latestApproved(rows)>latestApproved(fallback))fallback=rows;
  }catch(e){const message=e instanceof Error?e.message:'';const code=/^(INVALID_XML|NO_DATA|STATION_MISMATCH|INVALID_DATE|CONFLICTING_ROWS|SIZE|EMPTY_BODY|HTTP_[0-9]{3})$/.test(message)?message:e instanceof Error&&['TimeoutError','AbortError'].includes(e.name)?'TIMEOUT':'NETWORK_OR_READ_ERROR';failures.push('ENDPOINT_'+(index+1)+'_'+code);}}
  if(fallback)return fallback;
@@ -47,7 +47,10 @@ export async function pollAna(pool:Pool){
    const active=(await c.query('SELECT id FROM ana_targets WHERE id=$1 AND enabled AND archived_at IS NULL FOR UPDATE',[target.id])).rowCount;if(!active){await c.query('ROLLBACK');return;}
    for(const row of rows)await c.query(`INSERT INTO ana_telemetry(target_id,observed_at,discharge_m3_s,discharge_quality,level_raw,level_quality) VALUES($1,$2,$3,$4,$5,$6)
    ON CONFLICT(target_id,observed_at) DO UPDATE SET discharge_m3_s=excluded.discharge_m3_s,discharge_quality=excluded.discharge_quality,level_raw=excluded.level_raw,level_quality=excluded.level_quality,fetched_at=now()`,[target.id,row.observedAt,row.discharge,row.dischargeQuality,row.level,row.levelQuality]);
-   await c.query('UPDATE ana_targets SET last_success_at=now(),last_error=NULL,records_count=$2 WHERE id=$1',[target.id,rows.length]);await c.query('COMMIT');
+   const newest=Math.max(-Infinity,...rows.filter(r=>r.discharge!==null).map(r=>Date.parse(r.observedAt)));
+   const hour=Math.floor(Date.now()/3600000)*3600000;
+   const next=new Date(newest>=hour?hour+3600000+120000:Date.now()+300000);
+   await c.query('UPDATE ana_targets SET last_success_at=now(),last_error=NULL,records_count=$2,next_due=$3 WHERE id=$1',[target.id,rows.length,next]);await c.query('COMMIT');
   }catch(e){if(stage==='DATABASE')await c.query('ROLLBACK');const detail=stage==='FETCH'&&e instanceof Error?e.message:'DATABASE_WRITE_FAILED';await c.query('UPDATE ana_targets SET last_error=$2 WHERE id=$1',[target.id,detail]);console.error(JSON.stringify({event:'ana.collection.failed',station:target.station_code,detail}));}
  }finally{try{if(locked)await c.query('SELECT pg_advisory_unlock(827351)');}finally{c.release();}}
 }

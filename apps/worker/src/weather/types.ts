@@ -7,6 +7,7 @@ export interface Observation {
  quality:MeasurementQuality; precipitationQuality:MeasurementQuality; raw:Record<string,unknown>;
 }
 export interface ForecastPoint {
+ weatherCode?:number|null; isDay?:boolean|null; cloudCoverPct?:number|null; apparentTemperatureC?:number|null;
  validAt:string; precipitationMm:number|null; probabilityPct:number|null; temperatureC:number|null;
  humidityPct:number|null; windKmh:number|null; gustKmh:number|null;
 }

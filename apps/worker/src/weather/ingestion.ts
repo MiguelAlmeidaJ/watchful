@@ -51,8 +51,8 @@ export class Ingestion {
     const rows=await adapter.collect(target as ForecastTarget);
     const fetchedAt=new Date();
     await this.persist(c,async()=>{
-     for(const row of rows)await c.query(`INSERT INTO weather_forecasts(location_id,provider,fetched_at,valid_at,precipitation_mm,precipitation_probability_pct,temperature_c,humidity_pct,wind_kmh,gust_kmh)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`,[id,provider,fetchedAt,row.validAt,row.precipitationMm,row.probabilityPct,row.temperatureC,row.humidityPct,row.windKmh,row.gustKmh]);
+     for(const row of rows)await c.query(`INSERT INTO weather_forecasts(location_id,provider,fetched_at,valid_at,precipitation_mm,precipitation_probability_pct,temperature_c,humidity_pct,wind_kmh,gust_kmh,weather_code,is_day,cloud_cover_pct,apparent_temperature_c)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT DO NOTHING`,[id,provider,fetchedAt,row.validAt,row.precipitationMm,row.probabilityPct,row.temperatureC,row.humidityPct,row.windKmh,row.gustKmh,row.weatherCode??null,row.isDay??null,row.cloudCoverPct??null,row.apparentTemperatureC??null]);
      await this.finish(c,table,id,runId!,rows.length);
     });
    }

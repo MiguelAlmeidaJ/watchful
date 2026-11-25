@@ -53,7 +53,7 @@ test('provider HTTP rejects malformed or oversized responses and normalizes deci
 
 const forecastUnits = {
  temperature_2m: '°C', relative_humidity_2m: '%', precipitation: 'mm', precipitation_probability: '%',
- wind_speed_10m: 'km/h', wind_gusts_10m: 'km/h'
+ wind_speed_10m: 'km/h', wind_gusts_10m: 'km/h', weather_code:'wmo code', is_day:'', cloud_cover:'%', apparent_temperature:'°C'
 };
 
 test('Open-Meteo requires useful future data, UTC hourly timestamps and matching units', async context => {
@@ -67,14 +67,14 @@ test('Open-Meteo requires useful future data, UTC hourly timestamps and matching
   hourly_units: units,
   hourly: {
    time, temperature_2m: temperature, relative_humidity_2m: [null, null], precipitation: [null, null],
-   precipitation_probability: [null, null], wind_speed_10m: [null, null], wind_gusts_10m: [null, null]
+   precipitation_probability: [null, null], wind_speed_10m: [null, null], wind_gusts_10m: [null, null], weather_code:[3,0], is_day:[1,0], cloud_cover:[100,0], apparent_temperature:[26,19]
   }
  }));
  const provider = new OpenMeteoProvider();
  const point = { id: 'fixture', latitude: 0, longitude: 0 };
  await assert.rejects(provider.collect(point), /NO_FORECAST_DATA/);
  temperature[1] = 20;
- assert.equal((await provider.collect(point)).length, 2);
+ const rows=await provider.collect(point);assert.equal(rows.length,2);assert.equal(rows[0]?.weatherCode,3);assert.equal(rows[1]?.isDay,false);assert.equal(rows[0]?.cloudCoverPct,100);
  time[0] = future;
  await assert.rejects(provider.collect(point), /INVALID_FORECAST_TIME/);
  units.precipitation = 'inch';
