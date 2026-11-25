@@ -20,13 +20,17 @@ export function parseTelemetry(xml:string,code:string,now=Date.now()){
 }
 async function collect(code:string){
  const date=(t:number)=>new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'numeric'}).format(t);
- const failures:string[]=[];
+ const failures:string[]=[];let fallback:ReturnType<typeof parseTelemetry>|null=null;
+ const latestApproved=(rows:ReturnType<typeof parseTelemetry>)=>Math.max(-Infinity,...rows.filter(r=>r.discharge!==null).map(r=>Date.parse(r.observedAt)));
  for(const [index,endpoint] of endpoints.entries()){try{
   const url=new URL(endpoint);url.searchParams.set('codEstacao',code);url.searchParams.set('dataInicio',date(Date.now()-86400000));url.searchParams.set('dataFim',date(Date.now()));
   const res=await fetch(url,{signal:AbortSignal.timeout(12000),redirect:'error'});if(!res.ok)throw Error('HTTP_'+res.status);if(!res.body)throw Error('EMPTY_BODY');
   const reader=res.body.getReader();const chunks:Uint8Array[]=[];let bytes=0;try{while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.byteLength;if(bytes>2000000){await reader.cancel();throw Error('SIZE');}chunks.push(value);}}finally{reader.releaseLock();}
-  return parseTelemetry(Buffer.concat(chunks).toString('utf8'),code);
+  const rows=parseTelemetry(Buffer.concat(chunks).toString('utf8'),code);
+  if(latestApproved(rows)>=Date.now()-7200000)return rows;
+  if(!fallback||latestApproved(rows)>latestApproved(fallback))fallback=rows;
  }catch(e){const message=e instanceof Error?e.message:'';const code=/^(INVALID_XML|NO_DATA|STATION_MISMATCH|INVALID_DATE|CONFLICTING_ROWS|SIZE|EMPTY_BODY|HTTP_[0-9]{3})$/.test(message)?message:e instanceof Error&&['TimeoutError','AbortError'].includes(e.name)?'TIMEOUT':'NETWORK_OR_READ_ERROR';failures.push('ENDPOINT_'+(index+1)+'_'+code);}}
+ if(fallback)return fallback;
  throw Error(failures.join(';'));
 }
 export async function pollAna(pool:Pool){
@@ -34,7 +38,7 @@ export async function pollAna(pool:Pool){
  try{
   locked=Boolean((await c.query('SELECT pg_try_advisory_lock(827351) AS locked')).rows[0]?.locked);if(!locked)return;
   const target=(await c.query('SELECT id,station_code FROM ana_targets WHERE enabled AND archived_at IS NULL AND next_due<=now() ORDER BY next_due LIMIT 1')).rows[0];if(!target)return;
-  await c.query("UPDATE ana_targets SET last_attempt_at=now(),next_due=now()+interval '15 minutes' WHERE id=$1",[target.id]);
+  await c.query("UPDATE ana_targets SET last_attempt_at=now(),next_due=now()+interval '5 minutes' WHERE id=$1",[target.id]);
   let stage='FETCH';
   try{
    const rows=await collect(target.station_code);
