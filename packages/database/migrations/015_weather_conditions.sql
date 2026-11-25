@@ -1,0 +1,1 @@
+ALTER TABLE weather_forecasts ADD COLUMN weather_code integer CHECK(weather_code BETWEEN 0 AND 99), ADD COLUMN is_day boolean, ADD COLUMN cloud_cover_pct numeric CHECK(cloud_cover_pct BETWEEN 0 AND 100), ADD COLUMN apparent_temperature_c numeric;

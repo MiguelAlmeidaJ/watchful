@@ -1,0 +1,14 @@
+services:
+  postgres-test:
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_USER: watchful_test
+      POSTGRES_PASSWORD: watchful_test_local
+      POSTGRES_DB: watchful_test
+    ports: ["127.0.0.1:${WATCHFUL_TEST_PORT:-45432}:5432"]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U watchful_test -d watchful_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15

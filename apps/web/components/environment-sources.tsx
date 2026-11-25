@@ -1,0 +1,49 @@
+'use client';
+import {useState,useEffect} from 'react';
+import {Waves,Droplets,Mountain,Upload} from 'lucide-react';
+import {query,formatDate,type Client} from '@watchful/api-client';
+import {Panel,State} from './ui/panel';
+import {toast} from 'sonner';
+type Reading={provider:string;station_code:string;station_name:string;source_reference:string;imported_at:string;observed_at:string;metric:string;value:number;interval_minutes:number|null};
+const units:Record<string,string>={river_level_m:'m',discharge_m3_s:'m³/s',rainfall_mm:'mm'};
+const names:Record<string,string>={river_level_m:'Nível do rio',discharge_m3_s:'Vazão',rainfall_mm:'Chuva no intervalo'};
+export function EnvironmentSources({api,city,platform,revision,refresh}:{api:Client;city:string;platform:boolean;revision:number;refresh:()=>void}){
+ const [data,setData]=useState<Reading[]>([]),[error,setError]=useState(''),[busy,setBusy]=useState(false),[provider,setProvider]=useState<'ana'|'cemaden'>('ana'),[code,setCode]=useState(''),[name,setName]=useState(''),[reference,setReference]=useState(''),[file,setFile]=useState<File|null>(null),[risk,setRisk]=useState<File|null>(null);
+ useEffect(()=>{let live=true;api.request<{data:Reading[]}>('/environment/summary'+query({municipalityId:city})).then(v=>{if(live)setData(v.data);}).catch(e=>{if(live)setError(e.message);});return()=>{live=false;};},[api,city,revision]);
+ async function upload(){if(!file)return;setBusy(true);setError('');try{if(file.size>1000000)throw Error('Limite de 1 MB');const measurements=JSON.parse(await file.text());if(!Array.isArray(measurements))throw Error('O JSON deve conter uma lista de medições');const result=await api.request<{count:number}>('/environment/imports','POST',{municipalityId:city,provider,stationCode:code,stationName:name,sourceReference:reference,measurements});toast.success(result.count+' medições importadas');setFile(null);refresh();}catch(e){setError(e instanceof Error?e.message:'Falha');}finally{setBusy(false);}}
+ async function uploadRisk(){if(!risk)return;setBusy(true);setError('');try{if(risk.size>1000000)throw Error('Limite de 1 MB');const collection=JSON.parse(await risk.text());if(!window.confirm('Confirma que revisou a origem, versão e classificação de todos os setores?'))return;await api.request('/geo/risk-areas/import','POST',{municipalityId:city,source:'SGB — importação revisada pelo administrador',collection});toast.success('Setores importados');setRisk(null);refresh();}catch(e){setError(e instanceof Error?e.message:'Falha');}finally{setBusy(false);}}
+ return <><Panel title="Hidrologia e pluviometria"><div className="source-row"><Waves size={24}/><div className="source-description"><h3>ANA — HidroWeb</h3><p>Importação histórica disponível. Acesso automatizado depende de autorização da ANA.</p></div><a className="btn-secondary" href="https://www.snirh.gov.br/hidroweb/acesso-api" target="_blank" rel="noreferrer">Solicitar acesso</a></div><div className="source-row"><Droplets size={24}/><div className="source-description"><h3>CEMADEN</h3><p>Importação de medições exportadas pelo portal oficial. Não há coleta automática nesta versão.</p></div><a className="btn-secondary" href="https://mapainterativo.cemaden.gov.br/" target="_blank" rel="noreferrer">Dados oficiais</a></div><State error={error}/>{platform&&<form className="grid gap-3 mt-4" onSubmit={e=>{e.preventDefault();void upload();}}><h3 className="font-semibold">Importar série normalizada (JSON)</h3><div className="grid gap-3 sm:grid-cols-2"><label>Fonte<select className="field" value={provider} onChange={e=>setProvider(e.target.value as 'ana'|'cemaden')}><option value="ana">ANA</option><option value="cemaden">CEMADEN</option></select></label><label>Código oficial da estação<input required className="field" value={code} onChange={e=>setCode(e.target.value)}/></label><label>Nome da estação<input required className="field" value={name} onChange={e=>setName(e.target.value)}/></label><label>Referência do arquivo original<input required className="field" value={reference} onChange={e=>setReference(e.target.value)}/></label></div><input aria-label="Arquivo JSON de medições" type="file" accept=".json" onChange={e=>setFile(e.target.files?.[0]??null)}/><button className="btn source-action" disabled={busy||!file}><Upload size={16}/> Importar medições</button></form>}<p className="chart-caption mt-4">Medições históricas importadas, não monitoramento ao vivo. Estações podem ser referências regionais; representatividade não avaliada.</p>{data.length?data.map(x=><div className="city-row" key={x.provider+x.station_code+x.metric}><div><strong>{x.station_name} · {x.provider.toUpperCase()}</strong><p>{names[x.metric]} · {formatDate(x.observed_at)}{x.interval_minutes?' · intervalo '+x.interval_minutes+' min':''}</p><p>Origem: {x.source_reference}</p></div><strong>{x.value} {units[x.metric]}</strong></div>):<State empty/>}</Panel><Panel title="SGB — Setores de risco"><div className="source-row"><Mountain size={24}/><div className="source-description"><h3>Cartografia revisada para operação</h3><p>Importe GeoJSON revisado, em WGS84, com classificação e versão de origem. Use a importação histórica abaixo para levantamentos de referência.</p></div><a className="btn-secondary" href="https://rigeo.sgb.gov.br/" target="_blank" rel="noreferrer">Repositório SGB</a></div>{platform&&<div className="grid gap-3 mt-3"><input type="file" accept=".json,.geojson" aria-label="GeoJSON revisado do SGB" onChange={e=>setRisk(e.target.files?.[0]??null)}/><button className="btn source-action" disabled={busy||!risk} onClick={()=>void uploadRisk()}><Upload size={16}/> Importar setores revisados</button></div>}</Panel>{platform&&<HistoricalSectors api={api} city={city} refresh={refresh}/>}</>;
+}
+
+function HistoricalSectors({ api, city, refresh }: { api: Client; city: string; refresh: () => void }) {
+ const [file, setFile] = useState<File | null>(null);
+ const [busy, setBusy] = useState(false);
+ const [error, setError] = useState('');
+
+ async function upload() {
+  if (!file) return;
+  setBusy(true);
+  setError('');
+  try {
+   if (file.size > 1_000_000) throw new Error('O arquivo deve ter até 1 MB.');
+   const data = JSON.parse(await file.text());
+   if (data?.municipalityId !== city) throw new Error('O arquivo deve indicar o município selecionado.');
+   const result = await api.request<{ received: number; changed: number }>('/geo/historical-risk-sectors/import', 'POST', data);
+   toast.success(`${result.received} setores recebidos, ${result.changed} atualizados`);
+   refresh();
+  } catch (failure) {
+   setError(failure instanceof Error ? failure.message : 'Falha na importação');
+  } finally {
+   setBusy(false);
+  }
+ }
+
+ return <Panel title="Setores históricos">
+  <p className="chart-caption mb-3">Importe JSON com fonte, versão, data do levantamento e classificação original. Os setores aparecem em camada própria.</p>
+  <form className="grid gap-3" onSubmit={event => { event.preventDefault(); void upload(); }}>
+   <input type="file" accept=".json" aria-label="Arquivo JSON de setores históricos" onChange={event => setFile(event.target.files?.[0] ?? null)}/>
+   <button className="btn source-action" disabled={busy || !file}><Upload size={16}/> Importar setores históricos</button>
+  </form>
+  <State error={error}/>
+ </Panel>;
+}

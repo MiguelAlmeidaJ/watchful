@@ -1,0 +1,41 @@
+.rio-viewport { min-width: 0; }
+.rio-figura {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--public-line, #d3d9ce);
+  border-radius: var(--public-radius, 12px);
+  overflow: hidden;
+}
+.rio-quadro { position: relative; background: #d5dfcf; }
+.rio-desenho { position: relative; width: 100%; aspect-ratio: 1000 / 340; }
+.rio-desenho > :is(svg, .rio-arte) { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.rio-desenho > svg { transform: translateZ(0); }
+.rio-arte { object-fit: cover; pointer-events: none; }
+.rio-reserva { background: #d5dfcf; }
+.rio-figura figcaption {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 14px;
+  padding: 11px clamp(12px, 3vw, 22px);
+  color: var(--public-muted, #53625a); background: var(--public-surface, #fdfcf8);
+  font-size: 12px; line-height: 1.55;
+}
+.rio-figura figcaption strong { color: var(--public-ink, #192e27); font-weight: 650; }
+.rio-etapa { color: var(--public-ink, #192e27); }
+.rio-figura figcaption small { flex-basis: 100%; font-size: inherit; }
+.rio-pausa {
+  position: absolute; right: 12px; bottom: 10px; display: grid; place-items: center;
+  width: 44px; height: 44px; color: #fff8e4; background: #214637;
+  border: 1px solid #d2d6ba; border-radius: 50%;
+}
+.rio-pausa:hover { background: #112f26; }
+.public-site .rio-pausa:focus-visible { outline: 3px solid #fff8dc; outline-offset: 2px; }
+.rio-sem-leitura {
+  position: absolute; right: 10px; bottom: 10px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 9px; border-radius: 5px; background: #192e27; color: #fdfcf8;
+  font-size: 12px;
+}
+.rio-figura[data-faixa="indeterminada"] .rio-desenho { filter: saturate(.42); }
+@media (max-width: 700px) {
+  .rio-desenho { height: clamp(174px, 43vw, 260px); }
+  .rio-figura figcaption { display: grid; gap: 1px; }
+}

@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Vem Chuva Aí?",
+    "slug": "watchful",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "plugins": [
+      "@maplibre/maplibre-react-native"
+    ],
+    "android": {
+      "package": "com.watchful.app"
+    },
+    "ios": {
+      "bundleIdentifier": "com.watchful.app"
+    },
+    "userInterfaceStyle": "automatic"
+  }
+}
