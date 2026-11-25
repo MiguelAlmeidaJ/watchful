@@ -27,7 +27,9 @@ export class HydrologyController{
    const fresh=latest&&Date.now()-Date.parse(String(latest.observed_at))<=7200000;
    const complete=Boolean(fresh&&members.every(m=>m.enabled&&!m.last_error&&m.observed_at&&Date.parse(String(m.observed_at))===Date.parse(String(latest.observed_at))&&m.discharge_m3_s!==null&&m.discharge_quality==='Dado aprovado'));
    const issues=members.flatMap(m=>{const reason=!m.station_name?'Estação ausente':!m.enabled?'Coleta desativada':m.last_error?'Falha na coleta':!m.observed_at?'Sem leitura':m.discharge_m3_s==null||m.discharge_quality!=='Dado aprovado'?'Sem vazão aprovada':Date.now()-Date.parse(String(m.observed_at))>7200000?'Leitura desatualizada':!latest||Date.parse(String(m.observed_at))!==Date.parse(String(latest.observed_at))?'Horários diferentes':null;return reason?[{stationCode:m.station_code,reason}]:[];});
-   data.push({...c,members,latest:complete?latest:null,lastComplete:latest,history,issues,status:complete?'available':'unavailable'});
+   const mixedValid=members.length===c.station_codes.length&&members.every(m=>m.enabled&&!m.last_error&&m.discharge_quality==='Dado aprovado'&&typeof m.discharge_m3_s==='number'&&Number.isFinite(m.discharge_m3_s)&&m.observed_at&&Date.parse(String(m.observed_at))<=Date.now()&&Date.now()-Date.parse(String(m.observed_at))<=86400000);
+   const mixed=mixedValid?{discharge_m3_s:members.reduce((sum,m)=>sum+m.discharge_m3_s,0)+c.margin_m3_s,oldest_at:new Date(Math.min(...members.map(m=>Date.parse(String(m.observed_at))))).toISOString(),newest_at:new Date(Math.max(...members.map(m=>Date.parse(String(m.observed_at))))).toISOString()}:null;
+   data.push({...c,members,mixed,latest:complete?latest:null,lastComplete:latest,history,issues,status:complete?'available':'unavailable'});
   }
   const imported=(await this.db.query('SELECT * FROM hydro_import_runs WHERE municipality_id=$1',[id])).rows[0]??null;
   const named=(await this.db.query("SELECT name,count(*)::int AS reaches FROM hydro_features WHERE municipality_id=$1 AND name<>'Trecho sem nome' GROUP BY name ORDER BY count(*) DESC,name LIMIT 200",[id])).rows;
