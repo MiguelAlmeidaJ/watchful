@@ -1,4 +1,4 @@
-# Vem Chuva Aí?
+# Vem Chuva Aí
 
 Plataforma de monitoramento climático, inteligência territorial e alertas. O [acompanhamento do piloto](docs/piloto/PROGRESS.md) registra o estado verificado e as pendências.
 
