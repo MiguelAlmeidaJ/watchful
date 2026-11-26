@@ -13,7 +13,7 @@ async function bootstrap() {
   app.useGlobalFilters(new ErrorsFilter());
   app.setGlobalPrefix('api/v1');
   app.enableCors({ origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000' });
-  const doc = SwaggerModule.createDocument(app, new DocumentBuilder().setTitle('API · Vem Chuva Aí?').setVersion('1').addBearerAuth().build());
+  const doc = SwaggerModule.createDocument(app, new DocumentBuilder().setTitle('API · Vem Chuva Aí').setVersion('1').addBearerAuth().build());
   if (process.env.NODE_ENV !== 'production') SwaggerModule.setup('docs', app, doc);
   app.enableShutdownHooks();
   await app.listen(Number(process.env.API_PORT ?? 4000), process.env.API_HOST ?? '0.0.0.0');
