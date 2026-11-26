@@ -21,7 +21,7 @@ export function classifyMunicipalFlow(ibge: string, total: number | null, recent
  return { current, thresholds };
 }
 
-type Contribution = { stationCode: string; stationName: string | null; observedAt: string | null; dischargeM3s: number | null };
+type Contribution = { stationCode: string; stationName: string | null; observedAt: string | null; dischargeM3s: number | null; lastAttemptAt: string | null; lastSuccessAt: string | null; collectionFailed: boolean; enabled: boolean };
 
 export async function getPublicRiver(db: Database, municipalityId: string, ibge: string) {
  const isPilot = ibge === alemParaiba;
@@ -34,7 +34,7 @@ export async function getPublicRiver(db: Database, municipalityId: string, ibge:
   SELECT c.station_codes, c.margin_m3_s FROM municipalities m JOIN hydro_compositions c
    ON c.id=m.public_flow_composition_id AND c.municipality_id=m.id AND c.archived_at IS NULL WHERE m.id=$1
  ), members AS (
-  SELECT code, position, t.id, t.station_name, t.enabled, t.last_error
+  SELECT code, position, t.id, t.station_name, t.enabled, t.last_error, t.last_attempt_at, t.last_success_at
   FROM composition c CROSS JOIN LATERAL unnest(c.station_codes) WITH ORDINALITY AS stations(code, position)
   LEFT JOIN ana_targets t ON t.municipality_id=$1 AND t.station_code=code AND t.archived_at IS NULL
  ), complete AS (
@@ -51,12 +51,11 @@ export async function getPublicRiver(db: Database, municipalityId: string, ibge:
  SELECT (complete.measured_sum + CASE WHEN $2::boolean THEN 0 ELSE c.margin_m3_s::numeric END)::float8 AS total,
   complete.observed_at, coalesce(complete.recent,false) AS recent,
   (SELECT jsonb_agg(jsonb_build_object('stationCode',t.code,'stationName',t.station_name,
-   'observedAt',reading.observed_at,'dischargeM3s',reading.discharge_m3_s) ORDER BY t.position)
+   'observedAt',reading.observed_at,'dischargeM3s',reading.discharge_m3_s, 'lastAttemptAt',t.last_attempt_at, 'lastSuccessAt',t.last_success_at, 'collectionFailed',t.last_error IS NOT NULL, 'enabled',coalesce(t.enabled,false)) ORDER BY t.position)
    FROM members t LEFT JOIN LATERAL (
     SELECT observed_at,discharge_m3_s FROM ana_telemetry
     WHERE target_id=t.id AND discharge_quality='Dado aprovado' AND discharge_m3_s IS NOT NULL
      AND observed_at BETWEEN now()-interval '7 days' AND now()
-     AND (complete.observed_at IS NULL OR observed_at=complete.observed_at)
     ORDER BY observed_at DESC LIMIT 1
    ) reading ON true) AS contributions
  FROM composition c LEFT JOIN complete ON true`, [municipalityId, isPilot])).rows[0];
