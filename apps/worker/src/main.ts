@@ -100,7 +100,7 @@ async function bootstrap(){
  await alertQueue.upsertJobScheduler('alert-maintenance-v1',{every:60000},{name:'maintenance',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
  if(process.env.RISK_EVALUATION_ENABLED==='true')await alertQueue.upsertJobScheduler('risk-v1',{every:900000},{name:'schedule-risk',data:{},opts:{removeOnComplete:100,removeOnFail:100}});
  else await alertQueue.removeJobScheduler('risk-v1');
- console.log('Watchful weather and alert workers ready');
+ console.log('Vem Chuva Aí weather and alert workers ready');
  let closing=false;
  const shutdown=async()=>{if(closing)return;closing=true;await Promise.all([worker.close(),alertWorker.close()]);await Promise.all([queue.close(),alertQueue.close()]);await pool.end();};
  process.once('SIGINT',()=>void shutdown());process.once('SIGTERM',()=>void shutdown());
