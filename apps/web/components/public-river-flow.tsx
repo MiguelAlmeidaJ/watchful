@@ -30,7 +30,7 @@ export type PublicRiver = {
  estimatedM3s: number | null;
  observedAt: string | null;
  status: 'available' | 'historical' | 'unavailable';
- contributions: { stationCode: string; stationName: string | null; name: string; dischargeM3s: number | null; observedAt: string | null }[];
+ contributions: { stationCode: string; stationName: string | null; name: string; dischargeM3s: number | null; observedAt: string | null; lastAttemptAt?: string | null; lastSuccessAt?: string | null; collectionFailed?: boolean; enabled?: boolean }[];
  localStage: { current: Pick<Band, 'level' | 'label'> | null; thresholds: Band[] } | null;
 };
 
@@ -89,15 +89,17 @@ export function PublicRiverFlow({ river, riverName, municipality, municipalityCo
    </div>}
   </article>
   {!!river?.contributions?.length && <section aria-labelledby="pm-contributions-title">
-   <h3 id="pm-contributions-title">Vazões que compõem o total</h3>
+   <h3 id="pm-contributions-title">Últimas vazões por estação</h3>
    <div className="pm-river-contributions">
     {river.contributions.map(contribution => <article key={contribution.stationCode} className="pm-river-contribution">
      <h4>{contribution.name}</h4>
      <strong>{!vazaoValida(contribution.dischargeM3s) ? 'Indisponível' : <>{number.format(contribution.dischargeM3s)} <span>m³/s</span></>}</strong>
      <small>Estação {contribution.stationCode}{dataValida(contribution.observedAt) && <> · <time dateTime={contribution.observedAt}>{date.format(new Date(contribution.observedAt))}</time></>}</small>
+     <small>{contribution.enabled === false ? 'Coleta desabilitada' : contribution.collectionFailed ? 'Falha na última coleta' : !dataValida(contribution.observedAt) ? 'Sem leitura aprovada' : Date.now() - Date.parse(contribution.observedAt) > 7200000 ? 'Leitura desatualizada' : 'Leitura recente'}</small>
+     {dataValida(contribution.lastAttemptAt) && <small>Última consulta: {date.format(new Date(contribution.lastAttemptAt))}</small>}
     </article>)}
    </div>
-   {total == null && <p className="pm-note">As leituras individuais disponíveis podem ser de horários diferentes.</p>}
+   <p className="pm-note">As leituras individuais podem ser de horários diferentes e não representam necessariamente as parcelas do total exibido. O total usa apenas leituras aprovadas no mesmo horário.</p>
   </section>}
   {ilustrar && <IlustracaoRio faixa={faixa} motivoSemFaixa={motivoSemFaixa} dashboardReady={dashboardReady}/>}
  </section>;
